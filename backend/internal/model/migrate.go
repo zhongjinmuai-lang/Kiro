@@ -4,8 +4,8 @@ import (
 	"gorm.io/gorm"
 )
 
-// AllModels 所有 GORM 模型清单（用于 AutoMigrate 和依赖注入）
-func AllModels() []any {
+// CoreModels SaaS + 中台核心模型
+func CoreModels() []any {
 	return []any{
 		// SaaS 核心
 		&Tenant{}, &User{}, &Role{}, &Permission{}, &TenantPermission{},
@@ -18,7 +18,12 @@ func AllModels() []any {
 	}
 }
 
-// AutoMigrate 自动迁移所有模型（开发环境使用，生产请使用 migrations SQL）
-func AutoMigrate(db *gorm.DB) error {
-	return db.AutoMigrate(AllModels()...)
+// AllModels 兼容旧调用：仅核心模型
+func AllModels() []any { return CoreModels() }
+
+// AutoMigrate 自动迁移（开发使用；生产请执行 migrations/*.sql）
+// 族谱域模型由 genealogy 包自行维护，在 bootstrap 组合时传入 extras
+func AutoMigrate(db *gorm.DB, extras ...any) error {
+	all := append(CoreModels(), extras...)
+	return db.AutoMigrate(all...)
 }

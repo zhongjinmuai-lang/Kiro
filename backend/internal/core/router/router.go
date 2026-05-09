@@ -1,13 +1,15 @@
 // Package router Gin 路由注册中心
 // 按三级管控体系进行路由分组：
-//   /api/v1/*            - 终端客户业务接口（API Server）
-//   /admin/developer/*   - 开发商总后台（Admin Server）
-//   /admin/provider/*    - 服务商管理后台（Admin Server）
-//   /admin/customer/*    - 终端客户业务后台（Admin Server）
-//   /agent/*             - 智能体引擎（Agent Engine）
+//
+//	/api/v1/*            - 终端客户业务接口（API Server）
+//	/admin/developer/*   - 开发商总后台（Admin Server）
+//	/admin/provider/*    - 服务商管理后台（Admin Server）
+//	/admin/customer/*    - 终端客户业务后台（Admin Server）
+//	/agent/*             - 智能体引擎（Agent Engine）
 package router
 
 import (
+	"strconv"
 	"time"
 
 	"github.com/gin-contrib/gzip"
@@ -18,10 +20,37 @@ import (
 	// 引入 docs 包以注册 Swagger 规范
 	_ "github.com/zhongjinmuai-lang/mu-framework/docs"
 
+	"github.com/zhongjinmuai-lang/mu-framework/internal/ai"
+	"github.com/zhongjinmuai-lang/mu-framework/internal/auth"
 	"github.com/zhongjinmuai-lang/mu-framework/internal/core/bootstrap"
 	"github.com/zhongjinmuai-lang/mu-framework/internal/core/middleware"
+	"github.com/zhongjinmuai-lang/mu-framework/internal/genealogy"
+	"github.com/zhongjinmuai-lang/mu-framework/internal/platform"
+	"github.com/zhongjinmuai-lang/mu-framework/internal/saas"
 	"github.com/zhongjinmuai-lang/mu-framework/pkg/response"
 )
+
+// Services 业务服务集合（供三个 Server 复用）
+type Services struct {
+	Auth      *auth.Service
+	Genealogy *genealogy.Service
+	SaaS      *saas.Manager
+	Platform  *platform.Manager
+	AI        *ai.Gateway
+}
+
+// NewServices 一次性构造所有服务
+func NewServices(app *bootstrap.App) *Services {
+	aiGw := ai.NewGateway(nil)
+	saasMgr := saas.NewManager(app.DB, app.Redis)
+	return &Services{
+		Auth:      auth.NewService(app.DB, app.Redis, app.JWT),
+		Genealogy: genealogy.NewService(app.DB, aiGw),
+		SaaS:      saasMgr,
+		Platform:  platform.NewManager(app.DB, saasMgr.Hierarchy),
+		AI:        aiGw,
+	}
+}
 
 // baseEngine 构建带通用中间件的 Gin 引擎
 func baseEngine(app *bootstrap.App) *gin.Engine {
@@ -36,12 +65,10 @@ func baseEngine(app *bootstrap.App) *gin.Engine {
 		gzip.Gzip(gzip.DefaultCompression),
 	)
 
-	// 健康探针（无需鉴权）
 	r.GET("/health", healthHandler(app))
 	r.GET("/ready", readyHandler(app))
 	r.GET("/version", versionHandler(app))
 
-	// Swagger UI
 	if app.Config.Swagger.Enabled {
 		r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
 	}
@@ -49,27 +76,26 @@ func baseEngine(app *bootstrap.App) *gin.Engine {
 	return r
 }
 
-// NewAPIServer API Server（面向终端客户的业务接口）
+// NewAPIServer 终端客户业务 API
 func NewAPIServer(app *bootstrap.App) *gin.Engine {
 	r := baseEngine(app)
+	svc := NewServices(app)
+	authH := auth.NewHandler(svc.Auth)
+	genH := genealogy.NewHandler(svc.Genealogy)
 
-	// ===== 公开接口（无需登录）=====
+	// 公开接口
 	public := r.Group("/api/v1")
 	{
-		// 接口信息
 		public.GET("/info", infoHandler(app))
-
-		// 认证：登录 / 刷新令牌（高频，限流保护）
-		auth := public.Group("/auth")
-		auth.Use(middleware.RateLimit(app.Redis, 30, 1*time.Minute, nil))
+		ag := public.Group("/auth")
+		ag.Use(middleware.RateLimit(app.Redis, 30, time.Minute, nil))
 		{
-			auth.POST("/login", notImplemented("登录"))
-			auth.POST("/refresh", notImplemented("刷新令牌"))
-			auth.POST("/logout", notImplemented("登出"))
+			ag.POST("/login", authH.Login)
+			ag.POST("/refresh", authH.Refresh)
 		}
 	}
 
-	// ===== 需登录接口 =====
+	// 需登录接口
 	authed := r.Group("/api/v1")
 	authed.Use(
 		middleware.Auth(app.JWT),
@@ -77,21 +103,31 @@ func NewAPIServer(app *bootstrap.App) *gin.Engine {
 		middleware.TenantRLS(app.DB),
 	)
 	{
-		// 用户信息
-		authed.GET("/me", notImplemented("当前用户"))
-		authed.PUT("/me", notImplemented("更新资料"))
+		authed.GET("/me", authH.Me)
+		authed.POST("/auth/logout", authH.Logout)
+		authed.PUT("/auth/password", authH.ChangePassword)
 
-		// 族谱（终端客户核心业务）
-		genealogy := authed.Group("/genealogy")
+		// 族谱
+		gg := authed.Group("/genealogy")
 		{
-			genealogy.GET("/tree", notImplemented("世系树"))
-			genealogy.GET("/members/:id/ancestors", notImplemented("亲属溯源"))
-			genealogy.GET("/members/:id/descendants", notImplemented("分支遍历"))
-			genealogy.POST("/members", notImplemented("新增成员"))
-			genealogy.POST("/ocr", notImplemented("老族谱AI识别建档"))
+			gg.GET("/stats", genH.Stats)
+			gg.GET("/tree", genH.Tree)
+			gg.GET("/lca", genH.LCA)
+			gg.GET("/members", genH.ListMembers)
+			gg.POST("/members", genH.CreateMember)
+			gg.GET("/members/:id", genH.GetMember)
+			gg.PUT("/members/:id", genH.UpdateMember)
+			gg.DELETE("/members/:id", genH.DeleteMember)
+			gg.GET("/members/:id/ancestors", genH.Ancestors)
+			gg.GET("/members/:id/descendants", genH.Descendants)
+			gg.GET("/branches", genH.ListBranches)
+			gg.POST("/branches", genH.CreateBranch)
+			gg.GET("/announces", genH.ListAnnounces)
+			gg.POST("/announces", genH.PublishAnnounce)
+			gg.POST("/ocr", genH.OCR)
 		}
 
-		// 支付（仅使用服务商授权的渠道）
+		// 支付
 		pay := authed.Group("/pay")
 		{
 			pay.GET("/channels", notImplemented("可用支付渠道"))
@@ -100,7 +136,7 @@ func NewAPIServer(app *bootstrap.App) *gin.Engine {
 			pay.GET("/orders/:id", notImplemented("订单详情"))
 		}
 
-		// 存储（配额内上传下载）
+		// 存储
 		storage := authed.Group("/storage")
 		{
 			storage.POST("/upload", notImplemented("上传文件"))
@@ -109,7 +145,7 @@ func NewAPIServer(app *bootstrap.App) *gin.Engine {
 			storage.GET("/quota", notImplemented("配额查询"))
 		}
 
-		// 消息通知
+		// 消息
 		msg := authed.Group("/messages")
 		{
 			msg.GET("", notImplemented("站内信列表"))
@@ -121,41 +157,52 @@ func NewAPIServer(app *bootstrap.App) *gin.Engine {
 	return r
 }
 
-// NewAdminServer Admin Server（三级管理后台）
+// NewAdminServer 三级管理后台
 func NewAdminServer(app *bootstrap.App) *gin.Engine {
 	r := baseEngine(app)
+	svc := NewServices(app)
+	authH := auth.NewHandler(svc.Auth)
 
-	// 所有管理接口都需要登录
+	// 管理后台登录（独立于 API Server，便于隔离）
+	pub := r.Group("/admin/v1")
+	pub.Use(middleware.RateLimit(app.Redis, 30, time.Minute, nil))
+	{
+		pub.POST("/auth/login", authH.Login)
+		pub.POST("/auth/refresh", authH.Refresh)
+	}
+
+	// 需登录
 	admin := r.Group("/admin")
 	admin.Use(
 		middleware.Auth(app.JWT),
 		middleware.TenantRequired(),
 		middleware.TenantRLS(app.DB),
-		middleware.RateLimitByUser(app.Redis, 300, 1*time.Minute),
+		middleware.RateLimitByUser(app.Redis, 300, time.Minute),
 	)
+	{
+		admin.GET("/v1/me", authH.Me)
+		admin.POST("/v1/auth/logout", authH.Logout)
+		admin.PUT("/v1/auth/password", authH.ChangePassword)
+	}
 
-	registerDeveloperRoutes(admin, app)
-	registerProviderRoutes(admin, app)
-	registerCustomerRoutes(admin, app)
-
+	registerDeveloperRoutes(admin, app, svc, authH)
+	registerProviderRoutes(admin, app, svc)
+	registerCustomerRoutes(admin, app, svc)
 	return r
 }
 
-// NewAgentEngine Agent Engine（智能体引擎）
+// NewAgentEngine 智能体引擎
 func NewAgentEngine(app *bootstrap.App) *gin.Engine {
 	r := baseEngine(app)
 
 	agent := r.Group("/agent")
 	agent.Use(
 		middleware.Auth(app.JWT),
-		middleware.RequireLevel("developer"), // 仅开发商可直接访问引擎
+		middleware.RequireLevel("developer"),
 	)
 	{
-		// 引擎状态
 		agent.GET("/status", notImplemented("引擎状态"))
 		agent.GET("/stats", notImplemented("运行统计"))
-
-		// 插件管理（热插拔）
 		plugins := agent.Group("/plugins")
 		{
 			plugins.GET("", notImplemented("插件列表"))
@@ -164,56 +211,102 @@ func NewAgentEngine(app *bootstrap.App) *gin.Engine {
 			plugins.POST("/:id/stop", notImplemented("停止插件"))
 			plugins.DELETE("/:id", notImplemented("卸载插件"))
 		}
-
-		// 任务调度
 		tasks := agent.Group("/tasks")
 		{
 			tasks.POST("", notImplemented("提交任务"))
 			tasks.GET("/:id", notImplemented("任务状态"))
 		}
-
-		// 能力注册中心
 		caps := agent.Group("/capabilities")
 		{
 			caps.GET("", notImplemented("能力列表"))
 			caps.GET("/by-category/:category", notImplemented("按分类查找"))
 		}
-
-		// 自进化
 		evo := agent.Group("/evolution")
 		{
 			evo.GET("/events", notImplemented("进化事件历史"))
 			evo.POST("/metrics", notImplemented("上报指标"))
 		}
-
-		// AI 网关
-		ai := agent.Group("/ai")
+		aiGrp := agent.Group("/ai")
 		{
-			ai.POST("/chat", notImplemented("AI对话（多供应商降级）"))
-			ai.GET("/providers", notImplemented("供应商列表"))
+			aiGrp.POST("/chat", notImplemented("AI对话（多供应商降级）"))
+			aiGrp.GET("/providers", notImplemented("供应商列表"))
 		}
 	}
-
 	return r
 }
 
 // ========== 三级后台路由 ==========
 
-func registerDeveloperRoutes(root *gin.RouterGroup, app *bootstrap.App) {
+func registerDeveloperRoutes(root *gin.RouterGroup, app *bootstrap.App, svc *Services, authH *auth.Handler) {
 	g := root.Group("/developer")
 	g.Use(middleware.RequireLevel("developer"))
 
-	// 服务商管理
+	// 控制台统计
+	g.GET("/dashboard/stats", func(c *gin.Context) {
+		var providers, customers int64
+		app.DB.Table("tenants").Where("level = ? AND deleted_at IS NULL", "provider").Count(&providers)
+		app.DB.Table("tenants").Where("level = ? AND deleted_at IS NULL", "customer").Count(&customers)
+		response.OK(c, gin.H{
+			"tenants":   providers + customers,
+			"providers": providers,
+			"customers": customers,
+			"plugins":   0,
+		})
+	})
+
+	// 用户管理（注册）
+	g.POST("/users", authH.Register)
+
+	// 租户列表（服务商）
 	providers := g.Group("/providers")
 	{
-		providers.GET("", notImplemented("服务商列表"))
-		providers.POST("", notImplemented("入驻审核"))
-		providers.PUT("/:id", notImplemented("编辑服务商"))
-		providers.PUT("/:id/status", notImplemented("启用/禁用"))
-		providers.PUT("/:id/profit-rule", notImplemented("分润规则配置"))
+		providers.GET("", func(c *gin.Context) {
+			page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+			size, _ := strconv.Atoi(c.DefaultQuery("page_size", "20"))
+			// 开发商直属的所有服务商
+			tid := c.GetString(middleware.CtxKeyTenantID)
+			list, total, err := svc.SaaS.Tenant.ListByParent(c.Request.Context(), tid, page, size)
+			if err != nil {
+				response.InternalError(c, err.Error())
+				return
+			}
+			response.Page(c, list, page, size, total)
+		})
+		providers.POST("", func(c *gin.Context) {
+			var in saas.CreateProviderInput
+			if err := c.ShouldBindJSON(&in); err != nil {
+				response.BadRequest(c, err.Error())
+				return
+			}
+			tid := c.GetString(middleware.CtxKeyTenantID)
+			t, err := svc.SaaS.CreateProvider(c.Request.Context(), tid, &in)
+			if err != nil {
+				response.InternalError(c, err.Error())
+				return
+			}
+			response.Created(c, t)
+		})
+		providers.PUT("/:id/status", func(c *gin.Context) {
+			var body struct {
+				Status int `json:"status"`
+			}
+			_ = c.ShouldBindJSON(&body)
+			if err := svc.SaaS.Tenant.UpdateStatus(c.Request.Context(), c.Param("id"), body.Status); err != nil {
+				response.InternalError(c, err.Error())
+				return
+			}
+			response.OK(c, gin.H{"ok": true})
+		})
+		providers.DELETE("/:id", func(c *gin.Context) {
+			if err := svc.SaaS.Tenant.Delete(c.Request.Context(), c.Param("id")); err != nil {
+				response.InternalError(c, err.Error())
+				return
+			}
+			response.OK(c, gin.H{"ok": true})
+		})
 	}
 
-	// 支付中台（顶层集权）
+	// 支付中台
 	payment := g.Group("/payment")
 	{
 		payment.GET("/channels", notImplemented("全局支付渠道"))
@@ -222,111 +315,93 @@ func registerDeveloperRoutes(root *gin.RouterGroup, app *bootstrap.App) {
 		payment.DELETE("/channels/:id", notImplemented("渠道下架"))
 		payment.POST("/channels/:id/grant", notImplemented("授予服务商"))
 		payment.GET("/orders", notImplemented("全局订单"))
-		payment.GET("/reconcile", notImplemented("对账中心"))
 	}
-
-	// 存储中台（顶层集权）
 	storage := g.Group("/storage")
 	{
 		storage.GET("/sources", notImplemented("存储源列表"))
 		storage.POST("/sources", notImplemented("厂商准入"))
-		storage.PUT("/sources/:id", notImplemented("存储源配置"))
-		storage.DELETE("/sources/:id", notImplemented("下架存储源"))
-		storage.PUT("/policy", notImplemented("全局策略"))
 	}
-
-	// 通知中台（顶层集权）
 	notify := g.Group("/notify")
 	{
 		notify.GET("/channels", notImplemented("通知通道"))
 		notify.POST("/channels", notImplemented("渠道准入"))
 		notify.GET("/templates", notImplemented("模板定义"))
-		notify.POST("/templates", notImplemented("新增模板"))
-		notify.PUT("/templates/:id", notImplemented("编辑模板"))
-	}
-
-	// 系统版本 / 框架热更新
-	system := g.Group("/system")
-	{
-		system.GET("/versions", notImplemented("系统版本"))
-		system.POST("/hot-update", notImplemented("MU框架热更新"))
-		system.POST("/grayscale", notImplemented("灰度发布"))
-		system.GET("/domains", notImplemented("域名/SSL"))
 	}
 }
 
-func registerProviderRoutes(root *gin.RouterGroup, app *bootstrap.App) {
+func registerProviderRoutes(root *gin.RouterGroup, app *bootstrap.App, svc *Services) {
 	g := root.Group("/provider")
 	g.Use(middleware.RequireLevel("provider"))
 
-	// 客户管理
+	g.GET("/dashboard/stats", func(c *gin.Context) {
+		tid := c.GetString(middleware.CtxKeyTenantID)
+		var customers int64
+		app.DB.Table("tenants").Where("parent_id = ? AND deleted_at IS NULL", tid).Count(&customers)
+		response.OK(c, gin.H{
+			"customers": customers,
+			"revenue":   0.0,
+			"orders":    0,
+			"messages":  0,
+		})
+	})
+
+	// 终端客户管理
 	customers := g.Group("/customers")
 	{
-		customers.GET("", notImplemented("下属客户列表"))
-		customers.POST("", notImplemented("新增客户"))
-		customers.PUT("/:id", notImplemented("编辑客户"))
-		customers.PUT("/:id/status", notImplemented("启用/禁用"))
-		customers.PUT("/:id/package", notImplemented("套餐授权"))
-		customers.PUT("/:id/ai-quota", notImplemented("AI调用额度"))
+		customers.GET("", func(c *gin.Context) {
+			page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+			size, _ := strconv.Atoi(c.DefaultQuery("page_size", "20"))
+			tid := c.GetString(middleware.CtxKeyTenantID)
+			list, total, err := svc.SaaS.Tenant.ListByParent(c.Request.Context(), tid, page, size)
+			if err != nil {
+				response.InternalError(c, err.Error())
+				return
+			}
+			response.Page(c, list, page, size, total)
+		})
+		customers.POST("", func(c *gin.Context) {
+			var in saas.CreateCustomerInput
+			if err := c.ShouldBindJSON(&in); err != nil {
+				response.BadRequest(c, err.Error())
+				return
+			}
+			tid := c.GetString(middleware.CtxKeyTenantID)
+			t, err := svc.SaaS.CreateCustomer(c.Request.Context(), tid, &in)
+			if err != nil {
+				response.InternalError(c, err.Error())
+				return
+			}
+			response.Created(c, t)
+		})
+		customers.PUT("/:id/status", func(c *gin.Context) {
+			var body struct {
+				Status int `json:"status"`
+			}
+			_ = c.ShouldBindJSON(&body)
+			if err := svc.SaaS.Tenant.UpdateStatus(c.Request.Context(), c.Param("id"), body.Status); err != nil {
+				response.InternalError(c, err.Error())
+				return
+			}
+			response.OK(c, gin.H{"ok": true})
+		})
 	}
 
-	// 支付（二级管控）
-	payment := g.Group("/payment")
-	{
-		payment.GET("/channels", notImplemented("可用支付渠道"))
-		payment.POST("/merchants", notImplemented("绑定自有商户号"))
-		payment.GET("/orders", notImplemented("订单查看"))
-		payment.GET("/profit", notImplemented("分润明细"))
-		payment.POST("/withdraw", notImplemented("提现申请"))
-	}
-
-	// 存储（二级管控）
-	storage := g.Group("/storage")
-	{
-		storage.GET("/sources", notImplemented("可用存储源"))
-		storage.POST("/sources", notImplemented("绑定自有OSS/COS"))
-		storage.PUT("/customers/:id/quota", notImplemented("分配客户配额"))
-	}
-
-	// 通知（二级管控）
-	notify := g.Group("/notify")
-	{
-		notify.GET("/templates", notImplemented("模板列表（含平台基准）"))
-		notify.PUT("/templates/:id", notImplemented("品牌微调"))
-		notify.PUT("/customers/:id/rules", notImplemented("客户通知规则"))
-	}
+	// 支付、存储、通知（管理用）
+	g.GET("/payment/channels", notImplemented("可用支付渠道"))
+	g.GET("/storage/quotas", notImplemented("客户配额列表"))
+	g.GET("/notify/templates", notImplemented("模板列表"))
+	g.GET("/permissions", notImplemented("本租户权限"))
 }
 
-func registerCustomerRoutes(root *gin.RouterGroup, app *bootstrap.App) {
+func registerCustomerRoutes(root *gin.RouterGroup, app *bootstrap.App, svc *Services) {
 	g := root.Group("/customer")
 	g.Use(middleware.RequireLevel("customer"))
 
-	// 族谱管理
-	genealogy := g.Group("/genealogy")
-	{
-		genealogy.GET("/overview", notImplemented("族谱概览"))
-		genealogy.POST("/import", notImplemented("导入族谱"))
-		genealogy.GET("/export", notImplemented("导出PDF"))
-		genealogy.POST("/backup", notImplemented("备份"))
-		genealogy.POST("/restore", notImplemented("恢复"))
-		genealogy.POST("/announce", notImplemented("家族公告"))
-	}
-
-	// 存储（三级使用）
-	storage := g.Group("/storage")
-	{
-		storage.POST("/upload", notImplemented("上传文件"))
-		storage.GET("/files", notImplemented("文件列表"))
-		storage.GET("/quota", notImplemented("我的配额"))
-	}
-
-	// 订阅 / 续费
-	billing := g.Group("/billing")
-	{
-		billing.GET("/packages", notImplemented("可选套餐"))
-		billing.POST("/subscribe", notImplemented("订阅/续费"))
-		billing.GET("/invoices", notImplemented("发票申请"))
-	}
+	g.GET("/dashboard/stats", func(c *gin.Context) {
+		tid := c.GetString(middleware.CtxKeyTenantID)
+		stats, _ := svc.Genealogy.GetStats(c.Request.Context(), tid)
+		response.OK(c, stats)
+	})
 }
 
 // ========== 通用 Handler ==========
@@ -343,7 +418,6 @@ func healthHandler(app *bootstrap.App) gin.HandlerFunc {
 
 func readyHandler(app *bootstrap.App) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		// 依赖就绪检查
 		sqlDB, err := app.DB.DB()
 		if err != nil || sqlDB.Ping() != nil {
 			response.Fail(c, response.CodeBadGateway, "数据库未就绪")
@@ -386,11 +460,8 @@ func infoHandler(app *bootstrap.App) gin.HandlerFunc {
 	}
 }
 
-// notImplemented 占位 handler：所有未实现接口统一返回
 func notImplemented(name string) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		response.OK(c, gin.H{
-			"_hint": name + "（业务逻辑待补全）",
-		})
+		response.OK(c, gin.H{"_hint": name + "（业务逻辑待补全）"})
 	}
 }

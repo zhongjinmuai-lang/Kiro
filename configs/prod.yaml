@@ -1,6 +1,7 @@
 # ============================================================
-# MU Framework 生产环境配置
-# 敏感字段通过环境变量注入：${MU_DATABASE_PASSWORD} / ${MU_JWT_SECRET} 等
+# MU Framework 生产/部署默认配置
+# 运行时通过环境变量覆盖（Viper AutomaticEnv）：
+#   MU_DATABASE_HOST / MU_DATABASE_PASSWORD / MU_REDIS_ADDR / MU_JWT_SECRET ...
 # ============================================================
 
 app:
@@ -18,12 +19,12 @@ server:
   idle_timeout:  90s
 
 database:
-  host:               ${MU_DATABASE_HOST}
+  host:               postgres
   port:               5432
-  user:               ${MU_DATABASE_USER}
-  password:           ${MU_DATABASE_PASSWORD}
+  user:               mu_admin
+  password:           mu_secret_dev
   dbname:             mu_framework
-  sslmode:            require
+  sslmode:            disable
   timezone:           Asia/Shanghai
   max_open_conns:     100
   max_idle_conns:     20
@@ -33,21 +34,18 @@ database:
   slow_threshold:     500ms
 
 redis:
-  mode: cluster
-  addrs:
-    - ${MU_REDIS_NODE_1}
-    - ${MU_REDIS_NODE_2}
-    - ${MU_REDIS_NODE_3}
-  password:  ${MU_REDIS_PASSWORD}
+  mode:      standalone
+  addr:      redis:6379
+  password:  ""
   db:        0
-  pool_size: 100
-  min_idle:  20
+  pool_size: 50
+  min_idle:  10
 
 logger:
   level:       info
-  format:      json                 # 生产用 JSON 便于 ELK / Loki 解析
+  format:      json
   output:      both
-  dir:         /var/log/mu-framework
+  dir:         /app/logs
   file_name:   mu-framework.log
   max_size:    200
   max_age:     90
@@ -57,7 +55,7 @@ logger:
   stacktrace:  true
 
 jwt:
-  secret:               ${MU_JWT_SECRET}
+  secret:               mu-docker-secret-key-CHANGE-IN-PRODUCTION
   issuer:               mu-framework
   access_ttl:           2h
   refresh_ttl:          168h
@@ -74,12 +72,12 @@ platform:
     enabled: true
   storage:
     enabled:   true
-    base_path: /data/storage
+    base_path: /app/storage
   notify:
     enabled: true
 
 swagger:
-  enabled: false                   # 生产建议关闭 Swagger UI
+  enabled: true
   path:    /swagger/*any
   title:   MU Framework API
   version: v1

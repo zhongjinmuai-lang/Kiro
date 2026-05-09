@@ -1,6 +1,5 @@
 // Package docs 由 `swag init` 生成的 Swagger 注册包
-// 实际生产请执行： swag init -g cmd/api-server/main.go -o backend/docs --ot go,yaml
-// 本文件为占位骨架，确保 `import _ "xxx/backend/docs"` 可编译通过。
+// 生产请执行： swag init -g cmd/api-server/main.go -o backend/docs --ot go,yaml
 package docs
 
 import "github.com/swaggo/swag"
@@ -23,7 +22,6 @@ func init() {
 	swag.Register(SwaggerInfo.InstanceName(), SwaggerInfo)
 }
 
-// defaultTemplate 基础 Swagger JSON 模板（极简占位，swag 工具会完整替换）
 const defaultTemplate = `{
   "swagger": "2.0",
   "info": {

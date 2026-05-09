@@ -15,11 +15,11 @@ import (
 type Provider string
 
 const (
-	ProviderDoubao    Provider = "doubao"    // 豆包（火山引擎）
-	ProviderTongyi    Provider = "tongyi"    // 通义千问（阿里）
-	ProviderWenxin    Provider = "wenxin"    // 文心一言（百度）
-	ProviderDeepSeek  Provider = "deepseek"  // DeepSeek
-	ProviderPrivate   Provider = "private"   // 企业私有部署大模型
+	ProviderDoubao   Provider = "doubao"   // 豆包（火山引擎）
+	ProviderTongyi   Provider = "tongyi"   // 通义千问（阿里）
+	ProviderWenxin   Provider = "wenxin"   // 文心一言（百度）
+	ProviderDeepSeek Provider = "deepseek" // DeepSeek
+	ProviderPrivate  Provider = "private"  // 企业私有部署大模型
 )
 
 // Role 消息角色
@@ -75,10 +75,10 @@ type Client interface {
 // Gateway AI 调度网关
 // 支持：按租户路由 / 按优先级降级 / 故障熔断 / 调用审计
 type Gateway struct {
-	mu        sync.RWMutex
-	clients   map[Provider]Client
-	priority  []Provider // 默认优先级（降级顺序）
-	recorder  UsageRecorder
+	mu       sync.RWMutex
+	clients  map[Provider]Client
+	priority []Provider // 默认优先级（降级顺序）
+	recorder UsageRecorder
 }
 
 // UsageRecorder 用量记录器（实现方可写DB/监控）

@@ -13,8 +13,8 @@ import (
 type Node struct {
 	ID       string `json:"id" gorm:"column:id"`
 	ParentID string `json:"parent_id" gorm:"column:parent_id"`
-	Depth    int    `json:"depth" gorm:"column:depth"`        // 相对根的深度
-	Path     string `json:"path" gorm:"column:path"`          // 根→当前的完整路径（id列表，逗号分隔）
+	Depth    int    `json:"depth" gorm:"column:depth"` // 相对根的深度
+	Path     string `json:"path" gorm:"column:path"`   // 根→当前的完整路径（id列表，逗号分隔）
 	Code     string `json:"code,omitempty" gorm:"column:code"`
 	Name     string `json:"name,omitempty" gorm:"column:name"`
 }

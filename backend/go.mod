@@ -1,6 +1,6 @@
 module github.com/zhongjinmuai-lang/mu-framework
 
-go 1.26.1
+go 1.23.0
 
 require (
 	// Web引擎
@@ -12,7 +12,6 @@ require (
 	// ORM（深度适配PostgreSQL 18.3）
 	gorm.io/gorm v1.25.12
 	gorm.io/driver/postgres v1.5.11
-	gorm.io/plugin/soft_delete v1.2.1
 
 	// 日志（Zap 2.x + 切割）
 	go.uber.org/zap v1.27.0
@@ -28,6 +27,9 @@ require (
 	github.com/swaggo/gin-swagger v1.6.0
 	github.com/swaggo/files v1.0.1
 	github.com/swaggo/swag v1.16.4
+
+	// WebSocket（站内信实时推送）
+	github.com/gorilla/websocket v1.5.3
 
 	// 通用工具
 	github.com/google/uuid v1.6.0

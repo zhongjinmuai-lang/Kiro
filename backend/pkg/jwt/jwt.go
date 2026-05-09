@@ -27,22 +27,22 @@ const (
 
 // 常见错误
 var (
-	ErrTokenInvalid    = errors.New("令牌无效")
-	ErrTokenExpired    = errors.New("令牌已过期")
-	ErrTokenRevoked    = errors.New("令牌已撤销")
+	ErrTokenInvalid      = errors.New("令牌无效")
+	ErrTokenExpired      = errors.New("令牌已过期")
+	ErrTokenRevoked      = errors.New("令牌已撤销")
 	ErrTokenTypeMismatch = errors.New("令牌类型不匹配")
-	ErrRefreshRequired = errors.New("需要使用刷新令牌")
+	ErrRefreshRequired   = errors.New("需要使用刷新令牌")
 )
 
 // Claims JWT 载荷
 type Claims struct {
-	UserID   string    `json:"uid"`         // 用户ID
-	TenantID string    `json:"tid"`         // 租户ID
-	Level    string    `json:"lvl"`         // 层级 developer/provider/customer
-	Role     string    `json:"role"`        // 角色编码
-	Username string    `json:"uname"`       // 用户名
-	Type     TokenType `json:"typ"`         // 令牌类型
-	JTI      string    `json:"jti"`         // 令牌唯一ID（用于撤销）
+	UserID   string    `json:"uid"`   // 用户ID
+	TenantID string    `json:"tid"`   // 租户ID
+	Level    string    `json:"lvl"`   // 层级 developer/provider/customer
+	Role     string    `json:"role"`  // 角色编码
+	Username string    `json:"uname"` // 用户名
+	Type     TokenType `json:"typ"`   // 令牌类型
+	JTI      string    `json:"jti"`   // 令牌唯一ID（用于撤销）
 	jwtv5.RegisteredClaims
 }
 
@@ -50,18 +50,18 @@ type Claims struct {
 type TokenPair struct {
 	AccessToken      string    `json:"access_token"`
 	RefreshToken     string    `json:"refresh_token"`
-	TokenType        string    `json:"token_type"`          // 固定 Bearer
-	AccessExpiresAt  time.Time `json:"access_expires_at"`   // Access过期时间
-	RefreshExpiresAt time.Time `json:"refresh_expires_at"`  // Refresh过期时间
-	ExpiresIn        int64     `json:"expires_in"`          // Access剩余秒数
+	TokenType        string    `json:"token_type"`         // 固定 Bearer
+	AccessExpiresAt  time.Time `json:"access_expires_at"`  // Access过期时间
+	RefreshExpiresAt time.Time `json:"refresh_expires_at"` // Refresh过期时间
+	ExpiresIn        int64     `json:"expires_in"`         // Access剩余秒数
 }
 
 // Config JWT配置
 type Config struct {
-	Secret            string        `mapstructure:"secret" yaml:"secret"`
-	Issuer            string        `mapstructure:"issuer" yaml:"issuer"`
-	AccessTTL         time.Duration `mapstructure:"access_ttl" yaml:"access_ttl"`                   // AccessToken有效期
-	RefreshTTL        time.Duration `mapstructure:"refresh_ttl" yaml:"refresh_ttl"`                 // RefreshToken有效期
+	Secret             string        `mapstructure:"secret" yaml:"secret"`
+	Issuer             string        `mapstructure:"issuer" yaml:"issuer"`
+	AccessTTL          time.Duration `mapstructure:"access_ttl" yaml:"access_ttl"`                     // AccessToken有效期
+	RefreshTTL         time.Duration `mapstructure:"refresh_ttl" yaml:"refresh_ttl"`                   // RefreshToken有效期
 	AutoRenewThreshold time.Duration `mapstructure:"auto_renew_threshold" yaml:"auto_renew_threshold"` // 智能续签阈值（剩余时间小于此值时触发）
 }
 

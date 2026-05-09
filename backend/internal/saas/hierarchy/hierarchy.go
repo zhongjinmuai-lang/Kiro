@@ -75,8 +75,8 @@ func (s *Service) IsAncestor(ctx context.Context, ancestorID, descendantID strin
 }
 
 // ValidateControlFlow 校验控制流向（上级→下级，单向）
-//   1. operator 的层级权重必须小于 target
-//   2. operator 必须在 target 的祖先链路上
+//  1. operator 的层级权重必须小于 target
+//  2. operator 必须在 target 的祖先链路上
 func (s *Service) ValidateControlFlow(ctx context.Context, operatorTenantID, targetTenantID string) error {
 	opLvl, err := s.getLevel(ctx, operatorTenantID)
 	if err != nil {

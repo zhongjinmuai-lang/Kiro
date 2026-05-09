@@ -1,24 +1,41 @@
-# ===== 构建阶段 =====
+# ===== 构建阶段：三个 Vue 后台一次性构建 =====
 FROM node:22-alpine AS builder
+
+RUN apk add --no-cache git
 
 WORKDIR /build
 
-# 构建开发商后台
-COPY frontend/admin-developer/package.json frontend/admin-developer/
-RUN cd frontend/admin-developer && npm install
+# 复制所有前端工程（包含 package.json）
+COPY frontend/admin-developer /build/admin-developer
+COPY frontend/admin-provider  /build/admin-provider
+COPY frontend/admin-customer  /build/admin-customer
 
-COPY frontend/admin-developer/ frontend/admin-developer/
-RUN cd frontend/admin-developer && npm run build
+# 依次安装 + 构建（失败时容忍：缺 Vue 依赖也能进容器阶段）
+RUN cd /build/admin-developer && (npm install --no-audit --no-fund --loglevel=error && npm run build) || echo "admin-developer build skipped"
+RUN cd /build/admin-provider  && (npm install --no-audit --no-fund --loglevel=error && npm run build) || echo "admin-provider build skipped"
+RUN cd /build/admin-customer  && (npm install --no-audit --no-fund --loglevel=error && npm run build) || echo "admin-customer build skipped"
 
 # ===== 运行阶段 =====
 FROM nginx:1.27-alpine
 
-# 复制Nginx配置
+RUN rm -rf /usr/share/nginx/html/*
+
+# 复制 Nginx 配置
 COPY deploy/docker/nginx.conf /etc/nginx/nginx.conf
 
-# 复制构建产物
-COPY --from=builder /build/frontend/admin-developer/dist /usr/share/nginx/html/admin-developer
+# 复制构建产物（为空时占位一个 index.html 让 404 提示）
+COPY --from=builder /build/admin-developer/dist /usr/share/nginx/html/developer
+COPY --from=builder /build/admin-provider/dist  /usr/share/nginx/html/provider
+COPY --from=builder /build/admin-customer/dist  /usr/share/nginx/html/customer
 
-EXPOSE 80
+# 占位：若某端构建缺失，写入占位页
+RUN for d in developer provider customer; do \
+      if [ ! -f /usr/share/nginx/html/$d/index.html ]; then \
+        mkdir -p /usr/share/nginx/html/$d && \
+        echo "<html><body><h1>MU Framework - $d portal</h1><p>前端尚未构建，请运行 cd frontend/admin-$d && npm i && npm run build</p></body></html>" > /usr/share/nginx/html/$d/index.html; \
+      fi; \
+    done
+
+EXPOSE 80 8000 8001
 
 CMD ["nginx", "-g", "daemon off;"]

@@ -23,12 +23,12 @@ const (
 	CodeBadGateway    BizCode = 50200 // 下游依赖异常
 
 	// 业务域错误码段（按模块分配）
-	CodeTenantError   BizCode = 60100
-	CodePermError     BizCode = 60200
-	CodePaymentError  BizCode = 60300
-	CodeStorageError  BizCode = 60400
-	CodeNotifyError   BizCode = 60500
-	CodeAgentError    BizCode = 60600
+	CodeTenantError  BizCode = 60100
+	CodePermError    BizCode = 60200
+	CodePaymentError BizCode = 60300
+	CodeStorageError BizCode = 60400
+	CodeNotifyError  BizCode = 60500
+	CodeAgentError   BizCode = 60600
 )
 
 // Body 响应体

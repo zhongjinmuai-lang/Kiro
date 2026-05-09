@@ -3,31 +3,31 @@ import axios from 'axios'
 export const api = axios.create({
   baseURL: '',
   timeout: 30000,
-  headers: {
-    'Content-Type': 'application/json',
-  },
+  headers: { 'Content-Type': 'application/json' },
 })
 
-// 请求拦截器：注入Token
-api.interceptors.request.use(
-  (config) => {
-    const token = localStorage.getItem('mu_token')
-    if (token) {
-      config.headers.Authorization = `Bearer ${token}`
-    }
-    return config
-  },
-  (error) => Promise.reject(error)
-)
+// 请求：注入 Bearer token
+api.interceptors.request.use((config) => {
+  const token = localStorage.getItem('mu_token')
+  if (token) config.headers.Authorization = `Bearer ${token}`
+  return config
+})
 
-// 响应拦截器：统一错误处理
+// 响应：智能续签 + 401 登出
 api.interceptors.response.use(
-  (response) => response,
-  (error) => {
-    if (error.response?.status === 401) {
+  (resp) => {
+    const nt = resp.headers['x-new-access-token']
+    if (nt) localStorage.setItem('mu_token', nt)
+    const nr = resp.headers['x-new-refresh-token']
+    if (nr) localStorage.setItem('mu_refresh', nr)
+    return resp
+  },
+  (err) => {
+    if (err.response?.status === 401) {
       localStorage.removeItem('mu_token')
-      window.location.href = '/login'
+      localStorage.removeItem('mu_refresh')
+      if (!location.pathname.endsWith('/login')) location.href = '/login'
     }
-    return Promise.reject(error)
-  }
+    return Promise.reject(err)
+  },
 )

@@ -168,7 +168,7 @@ WITH RECURSIVE descendants AS (
     INNER JOIN descendants d ON t.parent_id = d.id
     WHERE t.deleted_at IS NULL
 )
-UPDATE tenants SET deleted_at = EXTRACT(EPOCH FROM NOW())::bigint, updated_at = NOW()
+UPDATE tenants SET deleted_at = NOW(), updated_at = NOW()
 WHERE id IN (SELECT id FROM descendants)`
 		return tx.Exec(sql, id).Error
 	})

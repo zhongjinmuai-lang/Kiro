@@ -83,7 +83,7 @@ func (a *App) initDatabase() error {
 	db, err := gorm.Open(postgres.Open(cfg.DSN()), &gorm.Config{
 		Logger:                                   gormLog,
 		NamingStrategy:                           schema.NamingStrategy{SingularTable: false}, // 使用复数表名
-		PrepareStmt:                              true, // 开启预编译缓存（性能优化）
+		PrepareStmt:                              true,                                        // 开启预编译缓存（性能优化）
 		DisableForeignKeyConstraintWhenMigrating: false,
 		NowFunc:                                  func() time.Time { return time.Now().Local() },
 	})

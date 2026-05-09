@@ -17,11 +17,11 @@ const (
 type NotifyMessageStatus int
 
 const (
-	MsgPending   NotifyMessageStatus = 0 // 待发送
-	MsgSending   NotifyMessageStatus = 1 // 发送中
-	MsgSent      NotifyMessageStatus = 2 // 已发送
-	MsgFailed    NotifyMessageStatus = 3 // 失败
-	MsgRetrying  NotifyMessageStatus = 4 // 重试中
+	MsgPending  NotifyMessageStatus = 0 // 待发送
+	MsgSending  NotifyMessageStatus = 1 // 发送中
+	MsgSent     NotifyMessageStatus = 2 // 已发送
+	MsgFailed   NotifyMessageStatus = 3 // 失败
+	MsgRetrying NotifyMessageStatus = 4 // 重试中
 )
 
 // NotifyChannel 通知通道配置
