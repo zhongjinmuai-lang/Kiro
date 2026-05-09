@@ -103,7 +103,32 @@ vim .env
 
 ---
 
-## 🔁 方案四：单机一体化（演示/开发）
+## 🎋 方案四：宝塔面板手动部署（无 Docker）
+
+**目录：** `deploy/baota/`
+
+适合不使用 Docker、习惯宝塔面板管理的用户。
+
+**步骤：**
+```bash
+# 在宝塔所在服务器上
+cd /www/wwwroot/mu-framework
+bash deploy/baota/setup.sh [developer|provider|customer]
+```
+
+脚本会交互式完成：
+- 环境检查（Go 1.23+ / Node 22 / PG 18 / Redis 7.4 / Nginx）
+- 数据库迁移（仅 developer 角色）
+- 编译后端 + 构建前端
+- 生成 PM2 ecosystem.config.js + Nginx 站点配置
+
+**详细手册：**
+- 📗 [`docs/baota-deployment.md`](../docs/baota-deployment.md) - 完整部署步骤
+- 📘 [`docs/environment-requirements.md`](../docs/environment-requirements.md) - 环境要求清单
+
+---
+
+## 🔁 方案五：单机一体化（演示/开发）
 
 **目录：** `deploy/docker/`
 

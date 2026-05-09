@@ -27,6 +27,12 @@ cd deploy/provider && cp .env.example .env && vim .env && ./deploy.sh up
 cd deploy/customer && cp .env.example .env && vim .env && ./deploy.sh up
 ```
 
+**🎋 宝塔面板手动部署**（无 Docker 场景）
+```bash
+cd /www/wwwroot/mu-framework
+bash deploy/baota/setup.sh [developer|provider|customer]
+```
+
 **🔁 单机演示（一键启动全部）**
 ```bash
 ./deploy/scripts/deploy.sh dev
@@ -184,6 +190,8 @@ Kiro/
 - [数据库设计](docs/database-design.md)
 - [API 规范（OpenAPI 3.1）](docs/api-conventions.md)
 - [部署运维手册](docs/deployment.md)
+- [🎋 宝塔面板部署指南](docs/baota-deployment.md)
+- [🛠️ 环境要求文档](docs/environment-requirements.md)
 - [三级管控操作手册](docs/operations-manual.md)
 - [插件开发指南](docs/plugin-development.md)
 - [族谱业务域](docs/genealogy-domain.md)
