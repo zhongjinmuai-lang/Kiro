@@ -1,6 +1,13 @@
 import axios from 'axios'
 
-export const api = axios.create({ baseURL: '', timeout: 30000 })
+/**
+ * 终端客户后台独立/贴牌部署：构建时指定开发商 API 地址
+ *   VITE_API_BASE_URL=https://api.mu.example.com npm run build
+ * 默认空字符串走同域 Nginx 反代
+ */
+const baseURL = (import.meta as any).env?.VITE_API_BASE_URL || ''
+
+export const api = axios.create({ baseURL, timeout: 30000 })
 
 api.interceptors.request.use((cfg) => {
   const t = localStorage.getItem('mu_token')

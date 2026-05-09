@@ -10,30 +10,29 @@
 
 ---
 
-## 🎯 一键部署
+## 🎯 部署方案（三服务器独立部署）
 
+**🏢 开发商服务器** — 后端全栈 + 开发商总后台
 ```bash
-# 克隆仓库
-git clone https://github.com/zhongjinmuai-lang/Kiro.git
-cd Kiro
+cd deploy/developer && cp .env.example .env && vim .env && ./deploy.sh up
+```
 
-# 一键启动（首次运行自动拉镜像 + 初始化数据库 + 启动三端）
+**🏪 服务商服务器** — 服务商 SaaS 后台独立部署（指向开发商 API）
+```bash
+cd deploy/provider && cp .env.example .env && vim .env && ./deploy.sh up
+```
+
+**👪 终端客户服务器** — 业务后台独立部署（支持贴牌）
+```bash
+cd deploy/customer && cp .env.example .env && vim .env && ./deploy.sh up
+```
+
+**🔁 单机演示（一键启动全部）**
+```bash
 ./deploy/scripts/deploy.sh dev
 ```
 
-启动后：
-
-| 端口 | 服务 | 默认登录账号 |
-|------|------|------------|
-| `http://localhost`         | 开发商总后台     | `mu-platform / admin / mu_admin_2026` |
-| `http://localhost:8000`    | 服务商 SaaS 后台 | `demo-provider / admin / mu_admin_2026` |
-| `http://localhost:8001`    | 终端客户业务后台 | `demo-family / admin / mu_admin_2026` |
-| `http://localhost:8080`    | API Server       | 终端业务 API |
-| `http://localhost:8081`    | Admin Server     | 三级管理后台 API |
-| `http://localhost:8082`    | Agent Engine     | 智能体引擎 API |
-| `http://localhost:8080/swagger/index.html` | Swagger UI | API 文档 |
-
-**停止/清理：** `./deploy/scripts/deploy.sh stop` | `./deploy/scripts/deploy.sh clean`
+详见 [部署说明 (deploy/README.md)](deploy/README.md)。
 
 ---
 

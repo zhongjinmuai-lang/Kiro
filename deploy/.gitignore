@@ -1,0 +1,9 @@
+# 敏感配置（实际部署时填入真实密钥）
+**/.env
+**/.env.local
+**/.env.production
+
+# SSL 证书（不应提交到 git）
+**/ssl/*.pem
+**/ssl/*.key
+**/ssl/*.crt

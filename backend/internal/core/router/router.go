@@ -304,6 +304,20 @@ func registerDeveloperRoutes(root *gin.RouterGroup, app *bootstrap.App, svc *Ser
 			}
 			response.OK(c, gin.H{"ok": true})
 		})
+		// 开发商重置服务商管理员密码
+		providers.POST("/reset-password", func(c *gin.Context) {
+			var in saas.ResetTenantPasswordInput
+			if err := c.ShouldBindJSON(&in); err != nil {
+				response.BadRequest(c, err.Error())
+				return
+			}
+			tid := c.GetString(middleware.CtxKeyTenantID)
+			if err := svc.SaaS.ResetTenantPassword(c.Request.Context(), tid, &in); err != nil {
+				response.InternalError(c, err.Error())
+				return
+			}
+			response.OK(c, gin.H{"ok": true})
+		})
 	}
 
 	// 支付中台
@@ -379,6 +393,20 @@ func registerProviderRoutes(root *gin.RouterGroup, app *bootstrap.App, svc *Serv
 			}
 			_ = c.ShouldBindJSON(&body)
 			if err := svc.SaaS.Tenant.UpdateStatus(c.Request.Context(), c.Param("id"), body.Status); err != nil {
+				response.InternalError(c, err.Error())
+				return
+			}
+			response.OK(c, gin.H{"ok": true})
+		})
+		// 服务商重置终端客户管理员密码
+		customers.POST("/reset-password", func(c *gin.Context) {
+			var in saas.ResetTenantPasswordInput
+			if err := c.ShouldBindJSON(&in); err != nil {
+				response.BadRequest(c, err.Error())
+				return
+			}
+			tid := c.GetString(middleware.CtxKeyTenantID)
+			if err := svc.SaaS.ResetTenantPassword(c.Request.Context(), tid, &in); err != nil {
 				response.InternalError(c, err.Error())
 				return
 			}
