@@ -1,0 +1,43 @@
+server:
+  port: 8080
+  admin_port: 8081
+  agent_port: 8082
+  mode: prod
+
+database:
+  host: ${MU_DB_HOST}
+  port: 5432
+  user: ${MU_DB_USER}
+  password: ${MU_DB_PASSWORD}
+  dbname: mu_framework
+  sslmode: require
+  max_conns: 50
+  min_conns: 10
+
+redis:
+  addr: ${MU_REDIS_ADDR}
+  password: ${MU_REDIS_PASSWORD}
+  db: 0
+  pool_size: 50
+
+jwt:
+  secret: ${MU_JWT_SECRET}
+  expire_hour: 8
+  issuer: mu-framework
+
+agent:
+  plugin_dir: /app/plugins
+  max_workers: 50
+  task_queue_size: 10000
+  evolution_cycle: 1800
+
+platform:
+  payment:
+    enabled: true
+    provider: wechat
+  storage:
+    enabled: true
+    provider: oss
+    base_path: /data/storage
+  notify:
+    enabled: true

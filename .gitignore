@@ -1,0 +1,43 @@
+# ===== Go =====
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+vendor/
+bin/
+
+# ===== Node.js =====
+node_modules/
+dist/
+.output/
+.nuxt/
+*.local
+
+# ===== IDE =====
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# ===== OS =====
+.DS_Store
+Thumbs.db
+*.log
+
+# ===== 环境 =====
+.env
+.env.local
+.env.*.local
+
+# ===== Docker =====
+docker-compose.override.yml
+
+# ===== 运行时 =====
+storage/
+plugins/
+logs/
+tmp/

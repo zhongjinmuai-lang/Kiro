@@ -1,0 +1,123 @@
+version: "3.9"
+
+services:
+  # ===== 基础设施 =====
+  postgres:
+    image: postgres:18.3-alpine
+    container_name: mu-postgres
+    environment:
+      POSTGRES_USER: mu_admin
+      POSTGRES_PASSWORD: mu_secret_dev
+      POSTGRES_DB: mu_framework
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+      - ./init-db.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mu_admin"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - mu-network
+
+  redis:
+    image: redis:7.4-alpine
+    container_name: mu-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - mu-network
+
+  # ===== 后端服务 =====
+  mu-api:
+    build:
+      context: ../../
+      dockerfile: deploy/docker/Dockerfile.backend
+    container_name: mu-api
+    command: ["./api-server"]
+    environment:
+      MU_DB_HOST: postgres
+      MU_REDIS_ADDR: redis:6379
+      MU_JWT_SECRET: mu-docker-secret-key
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - mu-network
+
+  mu-admin:
+    build:
+      context: ../../
+      dockerfile: deploy/docker/Dockerfile.backend
+    container_name: mu-admin
+    command: ["./admin-server"]
+    environment:
+      MU_DB_HOST: postgres
+      MU_REDIS_ADDR: redis:6379
+      MU_JWT_SECRET: mu-docker-secret-key
+    ports:
+      - "8081:8081"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - mu-network
+
+  mu-agent:
+    build:
+      context: ../../
+      dockerfile: deploy/docker/Dockerfile.backend
+    container_name: mu-agent
+    command: ["./agent-engine"]
+    environment:
+      MU_DB_HOST: postgres
+      MU_REDIS_ADDR: redis:6379
+    ports:
+      - "8082:8082"
+    volumes:
+      - plugins_data:/app/plugins
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - mu-network
+
+  # ===== 前端服务 =====
+  mu-frontend:
+    build:
+      context: ../../
+      dockerfile: deploy/docker/Dockerfile.frontend
+    container_name: mu-frontend
+    ports:
+      - "80:80"
+    depends_on:
+      - mu-api
+      - mu-admin
+    networks:
+      - mu-network
+
+volumes:
+  pg_data:
+  redis_data:
+  plugins_data:
+
+networks:
+  mu-network:
+    driver: bridge

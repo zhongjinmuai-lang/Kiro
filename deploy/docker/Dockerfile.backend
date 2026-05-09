@@ -1,0 +1,43 @@
+# ===== 构建阶段 =====
+FROM golang:1.26.1-alpine AS builder
+
+RUN apk add --no-cache git ca-certificates tzdata
+
+WORKDIR /build
+
+# 先复制依赖文件，利用Docker缓存
+COPY backend/go.mod backend/go.sum ./
+RUN go mod download
+
+# 复制源码
+COPY backend/ .
+COPY configs/ /configs/
+
+# 构建三个服务
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o /app/api-server ./cmd/api-server/
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o /app/admin-server ./cmd/admin-server/
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o /app/agent-engine ./cmd/agent-engine/
+
+# ===== 运行阶段 =====
+FROM alpine:3.20
+
+RUN apk add --no-cache ca-certificates tzdata
+ENV TZ=Asia/Shanghai
+
+WORKDIR /app
+
+# 从构建阶段复制二进制文件
+COPY --from=builder /app/ .
+COPY --from=builder /configs/ /app/configs/
+
+# 创建必要目录
+RUN mkdir -p /app/plugins /app/storage /app/logs
+
+# 非root用户运行
+RUN adduser -D -u 1000 muapp
+USER muapp
+
+EXPOSE 8080 8081 8082
+
+# 默认启动API服务（可通过CMD覆盖）
+CMD ["./api-server"]

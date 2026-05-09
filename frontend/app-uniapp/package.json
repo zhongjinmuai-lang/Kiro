@@ -1,0 +1,25 @@
+{
+  "name": "mu-app-uniapp",
+  "version": "1.0.0",
+  "description": "MU框架 - 多端应用（UniApp X）",
+  "scripts": {
+    "dev:h5": "uni --platform h5",
+    "dev:mp-weixin": "uni --platform mp-weixin",
+    "dev:app-android": "uni --platform app-android",
+    "build:h5": "uni build --platform h5",
+    "build:mp-weixin": "uni build --platform mp-weixin"
+  },
+  "dependencies": {
+    "vue": "^3.5.0",
+    "pinia": "^2.2.0"
+  },
+  "devDependencies": {
+    "@dcloudio/uni-app": "latest",
+    "@dcloudio/uni-app-plus": "latest",
+    "@dcloudio/uni-h5": "latest",
+    "@dcloudio/uni-mp-weixin": "latest",
+    "@dcloudio/vite-plugin-uni": "latest",
+    "typescript": "^5.6.0",
+    "vite": "^6.0.0"
+  }
+}

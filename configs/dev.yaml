@@ -1,0 +1,43 @@
+server:
+  port: 8080
+  admin_port: 8081
+  agent_port: 8082
+  mode: dev
+
+database:
+  host: localhost
+  port: 5432
+  user: mu_admin
+  password: mu_secret_dev
+  dbname: mu_framework
+  sslmode: disable
+  max_conns: 20
+  min_conns: 5
+
+redis:
+  addr: localhost:6379
+  password: ""
+  db: 0
+  pool_size: 10
+
+jwt:
+  secret: mu-dev-secret-key-change-in-prod
+  expire_hour: 24
+  issuer: mu-framework
+
+agent:
+  plugin_dir: ./plugins
+  max_workers: 10
+  task_queue_size: 1000
+  evolution_cycle: 3600
+
+platform:
+  payment:
+    enabled: true
+    provider: wechat
+  storage:
+    enabled: true
+    provider: local
+    base_path: ./storage
+  notify:
+    enabled: true
