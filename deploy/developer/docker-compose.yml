@@ -1,0 +1,142 @@
+version: "3.9"
+
+# ============================================================
+# 🏢 开发商服务器部署编排
+# 部署内容：PostgreSQL + Redis + 后端三服务（API/Admin/Agent）+ 开发商前端 + Nginx
+# 对外暴露：
+#   - 80/443：开发商总后台 UI + /api/* /admin/* /agent/* 反代
+#   - API 对外提供给服务商、终端客户后台调用
+# ============================================================
+
+services:
+  # ---------- 基础设施 ----------
+  postgres:
+    image: postgres:18.3-alpine
+    container_name: mu-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-mu_admin}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-mu_secret_dev}
+      POSTGRES_DB: ${POSTGRES_DB:-mu_framework}
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+      - ../../backend/migrations:/docker-entrypoint-initdb.d/migrations:ro
+      - ../docker/init-db.sql:/docker-entrypoint-initdb.d/00-init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-mu_admin} -d ${POSTGRES_DB:-mu_framework}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks: [mu-network]
+    restart: unless-stopped
+
+  redis:
+    image: redis:7.4-alpine
+    container_name: mu-redis
+    volumes:
+      - redis_data:/data
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD:-}"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "--no-auth-warning", "-a", "${REDIS_PASSWORD:-}", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks: [mu-network]
+    restart: unless-stopped
+
+  # ---------- 后端三服务 ----------
+  mu-api:
+    build:
+      context: ../../
+      dockerfile: deploy/docker/Dockerfile.backend
+    container_name: mu-api
+    command: ["/app/api-server", "--config", "/app/configs/prod.yaml"]
+    environment:
+      MU_APP_ENV: prod
+      MU_DATABASE_HOST: postgres
+      MU_DATABASE_USER: ${POSTGRES_USER:-mu_admin}
+      MU_DATABASE_PASSWORD: ${POSTGRES_PASSWORD:-mu_secret_dev}
+      MU_DATABASE_DBNAME: ${POSTGRES_DB:-mu_framework}
+      MU_REDIS_ADDR: redis:6379
+      MU_REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      MU_JWT_SECRET: ${JWT_SECRET:-mu-PLEASE-CHANGE-ME-in-production}
+      # CORS 白名单：服务商/终端客户前端源
+      MU_CORS_ALLOW_ORIGINS: ${CORS_ALLOW_ORIGINS:-}
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis:    { condition: service_healthy }
+    networks: [mu-network]
+    restart: unless-stopped
+
+  mu-admin:
+    build:
+      context: ../../
+      dockerfile: deploy/docker/Dockerfile.backend
+    container_name: mu-admin
+    command: ["/app/admin-server", "--config", "/app/configs/prod.yaml"]
+    environment:
+      MU_APP_ENV: prod
+      MU_DATABASE_HOST: postgres
+      MU_DATABASE_USER: ${POSTGRES_USER:-mu_admin}
+      MU_DATABASE_PASSWORD: ${POSTGRES_PASSWORD:-mu_secret_dev}
+      MU_DATABASE_DBNAME: ${POSTGRES_DB:-mu_framework}
+      MU_REDIS_ADDR: redis:6379
+      MU_REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      MU_JWT_SECRET: ${JWT_SECRET:-mu-PLEASE-CHANGE-ME-in-production}
+      MU_CORS_ALLOW_ORIGINS: ${CORS_ALLOW_ORIGINS:-}
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis:    { condition: service_healthy }
+    networks: [mu-network]
+    restart: unless-stopped
+
+  mu-agent:
+    build:
+      context: ../../
+      dockerfile: deploy/docker/Dockerfile.backend
+    container_name: mu-agent
+    command: ["/app/agent-engine", "--config", "/app/configs/prod.yaml"]
+    environment:
+      MU_APP_ENV: prod
+      MU_DATABASE_HOST: postgres
+      MU_DATABASE_USER: ${POSTGRES_USER:-mu_admin}
+      MU_DATABASE_PASSWORD: ${POSTGRES_PASSWORD:-mu_secret_dev}
+      MU_DATABASE_DBNAME: ${POSTGRES_DB:-mu_framework}
+      MU_REDIS_ADDR: redis:6379
+      MU_REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      MU_JWT_SECRET: ${JWT_SECRET:-mu-PLEASE-CHANGE-ME-in-production}
+    volumes:
+      - plugins_data:/app/plugins
+      - storage_data:/app/storage
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis:    { condition: service_healthy }
+    networks: [mu-network]
+    restart: unless-stopped
+
+  # ---------- 开发商前端（仅托管 admin-developer） ----------
+  mu-developer-web:
+    build:
+      context: ../../
+      dockerfile: deploy/developer/Dockerfile.web
+      args:
+        VITE_API_BASE_URL: ""
+    container_name: mu-developer-web
+    ports:
+      - "${HTTP_PORT:-80}:80"
+      - "${HTTPS_PORT:-443}:443"
+    volumes:
+      # SSL 证书挂载（生产请替换为真实证书）
+      - ./ssl:/etc/nginx/ssl:ro
+    depends_on: [mu-api, mu-admin, mu-agent]
+    networks: [mu-network]
+    restart: unless-stopped
+
+volumes:
+  pg_data:
+  redis_data:
+  plugins_data:
+  storage_data:
+
+networks:
+  mu-network:
+    driver: bridge

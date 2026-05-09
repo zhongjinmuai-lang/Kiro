@@ -12,12 +12,12 @@ type Capability struct {
 	ID          string    `json:"id"`
 	Name        string    `json:"name"`
 	Version     string    `json:"version"`
-	Provider    string    `json:"provider"`     // 提供方（插件ID）
-	Category    string    `json:"category"`     // 能力分类
+	Provider    string    `json:"provider"` // 提供方（插件ID）
+	Category    string    `json:"category"` // 能力分类
 	Description string    `json:"description"`
-	Endpoint    string    `json:"endpoint"`     // 调用端点
-	Protocol    string    `json:"protocol"`     // 协议：http / grpc / internal
-	Status      string    `json:"status"`       // active / inactive / deprecated
+	Endpoint    string    `json:"endpoint"` // 调用端点
+	Protocol    string    `json:"protocol"` // 协议：http / grpc / internal
+	Status      string    `json:"status"`   // active / inactive / deprecated
 	RegisterAt  time.Time `json:"register_at"`
 }
 

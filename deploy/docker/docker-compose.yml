@@ -13,12 +13,14 @@ services:
       - "5432:5432"
     volumes:
       - pg_data:/var/lib/postgresql/data
-      - ./init-db.sql:/docker-entrypoint-initdb.d/init.sql
+      # 初始化脚本与迁移脚本都挂进容器
+      - ../../backend/migrations:/docker-entrypoint-initdb.d/migrations:ro
+      - ./init-db.sql:/docker-entrypoint-initdb.d/00-init.sql:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U mu_admin"]
+      test: ["CMD-SHELL", "pg_isready -U mu_admin -d mu_framework"]
       interval: 5s
       timeout: 5s
-      retries: 5
+      retries: 10
     networks:
       - mu-network
 
@@ -29,11 +31,12 @@ services:
       - "6379:6379"
     volumes:
       - redis_data:/data
+    command: ["redis-server", "--appendonly", "yes"]
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
       timeout: 3s
-      retries: 5
+      retries: 10
     networks:
       - mu-network
 
@@ -43,11 +46,15 @@ services:
       context: ../../
       dockerfile: deploy/docker/Dockerfile.backend
     container_name: mu-api
-    command: ["./api-server"]
+    command: ["/app/api-server", "--config", "/app/configs/prod.yaml"]
     environment:
-      MU_DB_HOST: postgres
+      MU_APP_ENV: prod
+      MU_DATABASE_HOST: postgres
+      MU_DATABASE_USER: mu_admin
+      MU_DATABASE_PASSWORD: mu_secret_dev
+      MU_DATABASE_DBNAME: mu_framework
       MU_REDIS_ADDR: redis:6379
-      MU_JWT_SECRET: mu-docker-secret-key
+      MU_JWT_SECRET: mu-docker-secret-key-CHANGE-IN-PRODUCTION
     ports:
       - "8080:8080"
     depends_on:
@@ -57,17 +64,22 @@ services:
         condition: service_healthy
     networks:
       - mu-network
+    restart: unless-stopped
 
   mu-admin:
     build:
       context: ../../
       dockerfile: deploy/docker/Dockerfile.backend
     container_name: mu-admin
-    command: ["./admin-server"]
+    command: ["/app/admin-server", "--config", "/app/configs/prod.yaml"]
     environment:
-      MU_DB_HOST: postgres
+      MU_APP_ENV: prod
+      MU_DATABASE_HOST: postgres
+      MU_DATABASE_USER: mu_admin
+      MU_DATABASE_PASSWORD: mu_secret_dev
+      MU_DATABASE_DBNAME: mu_framework
       MU_REDIS_ADDR: redis:6379
-      MU_JWT_SECRET: mu-docker-secret-key
+      MU_JWT_SECRET: mu-docker-secret-key-CHANGE-IN-PRODUCTION
     ports:
       - "8081:8081"
     depends_on:
@@ -77,20 +89,27 @@ services:
         condition: service_healthy
     networks:
       - mu-network
+    restart: unless-stopped
 
   mu-agent:
     build:
       context: ../../
       dockerfile: deploy/docker/Dockerfile.backend
     container_name: mu-agent
-    command: ["./agent-engine"]
+    command: ["/app/agent-engine", "--config", "/app/configs/prod.yaml"]
     environment:
-      MU_DB_HOST: postgres
+      MU_APP_ENV: prod
+      MU_DATABASE_HOST: postgres
+      MU_DATABASE_USER: mu_admin
+      MU_DATABASE_PASSWORD: mu_secret_dev
+      MU_DATABASE_DBNAME: mu_framework
       MU_REDIS_ADDR: redis:6379
+      MU_JWT_SECRET: mu-docker-secret-key-CHANGE-IN-PRODUCTION
     ports:
       - "8082:8082"
     volumes:
       - plugins_data:/app/plugins
+      - storage_data:/app/storage
     depends_on:
       postgres:
         condition: service_healthy
@@ -98,25 +117,30 @@ services:
         condition: service_healthy
     networks:
       - mu-network
+    restart: unless-stopped
 
-  # ===== 前端服务 =====
+  # ===== 前端服务（统一 Nginx 托管三个管理后台 + API 代理） =====
   mu-frontend:
     build:
       context: ../../
       dockerfile: deploy/docker/Dockerfile.frontend
     container_name: mu-frontend
     ports:
-      - "80:80"
+      - "80:80"       # 开发商 http://admin.mu.local
+      - "8000:8000"   # 服务商 http://provider.mu.local
+      - "8001:8001"   # 终端客户 http://customer.mu.local
     depends_on:
       - mu-api
       - mu-admin
     networks:
       - mu-network
+    restart: unless-stopped
 
 volumes:
   pg_data:
   redis_data:
   plugins_data:
+  storage_data:
 
 networks:
   mu-network:

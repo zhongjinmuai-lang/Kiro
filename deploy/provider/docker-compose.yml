@@ -1,0 +1,26 @@
+version: "3.9"
+
+# ============================================================
+# 🏪 服务商服务器独立部署
+# 部署内容：仅 admin-provider 前端 + Nginx（反向代理到开发商 API）
+# 无需数据库、后端服务，所有业务请求由开发商服务器统一处理
+# ============================================================
+
+services:
+  mu-provider-web:
+    build:
+      context: ../../
+      dockerfile: deploy/provider/Dockerfile.web
+      args:
+        # 👉 构建时注入开发商 API 地址（必填，无默认值）
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL}
+    container_name: mu-provider-web
+    environment:
+      # 运行时注入给 Nginx 做反代 upstream（同时支持 CORS 直连）
+      DEVELOPER_API_URL: ${DEVELOPER_API_URL}
+    ports:
+      - "${HTTP_PORT:-80}:80"
+      - "${HTTPS_PORT:-443}:443"
+    volumes:
+      - ./ssl:/etc/nginx/ssl:ro
+    restart: unless-stopped

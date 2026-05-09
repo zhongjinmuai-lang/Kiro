@@ -1,231 +1,236 @@
+// Package payment 聚合支付中台：开发商准入 → 服务商授权/绑定 → 终端受限使用
 package payment
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"log/slog"
 	"time"
 
-	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgxpool"
+	"go.uber.org/zap"
+	"gorm.io/gorm"
 
+	"github.com/zhongjinmuai-lang/mu-framework/internal/model"
 	"github.com/zhongjinmuai-lang/mu-framework/internal/saas/hierarchy"
+	"github.com/zhongjinmuai-lang/mu-framework/pkg/logger"
 )
-
-// ChannelType 支付渠道类型
-type ChannelType string
-
-const (
-	ChannelWechat  ChannelType = "wechat"  // 微信支付
-	ChannelAlipay  ChannelType = "alipay"  // 支付宝
-	ChannelUnion   ChannelType = "union"   // 银联
-	ChannelStripe  ChannelType = "stripe"  // Stripe
-)
-
-// OrderStatus 订单状态
-type OrderStatus int
-
-const (
-	OrderPending   OrderStatus = 0 // 待支付
-	OrderPaid      OrderStatus = 1 // 已支付
-	OrderRefunding OrderStatus = 2 // 退款中
-	OrderRefunded  OrderStatus = 3 // 已退款
-	OrderClosed    OrderStatus = 4 // 已关闭
-)
-
-// Channel 支付渠道配置
-type Channel struct {
-	ID         string      `json:"id" db:"id"`
-	TenantID   string      `json:"tenant_id" db:"tenant_id"`     // 配置方租户
-	Level      string      `json:"level" db:"level"`             // 配置层级
-	Type       ChannelType `json:"type" db:"type"`
-	Name       string      `json:"name" db:"name"`
-	AppID      string      `json:"app_id" db:"app_id"`
-	MerchantID string      `json:"merchant_id" db:"merchant_id"`
-	SecretKey  string      `json:"-" db:"secret_key"`            // 密钥不对外暴露
-	NotifyURL  string      `json:"notify_url" db:"notify_url"`
-	Status     int         `json:"status" db:"status"`
-	CreatedAt  time.Time   `json:"created_at" db:"created_at"`
-	UpdatedAt  time.Time   `json:"updated_at" db:"updated_at"`
-}
-
-// Order 支付订单
-type Order struct {
-	ID          string      `json:"id" db:"id"`
-	TenantID    string      `json:"tenant_id" db:"tenant_id"`
-	ChannelID   string      `json:"channel_id" db:"channel_id"`
-	ChannelType ChannelType `json:"channel_type" db:"channel_type"`
-	OrderNo     string      `json:"order_no" db:"order_no"`       // 业务订单号
-	TradeNo     string      `json:"trade_no" db:"trade_no"`       // 第三方交易号
-	Amount      int64       `json:"amount" db:"amount"`           // 金额（分）
-	Currency    string      `json:"currency" db:"currency"`       // 币种
-	Subject     string      `json:"subject" db:"subject"`         // 订单标题
-	Status      OrderStatus `json:"status" db:"status"`
-	PaidAt      *time.Time  `json:"paid_at" db:"paid_at"`
-	CreatedAt   time.Time   `json:"created_at" db:"created_at"`
-	UpdatedAt   time.Time   `json:"updated_at" db:"updated_at"`
-}
 
 // Service 支付中台服务
 type Service struct {
-	db        *pgxpool.Pool
+	db        *gorm.DB
 	hierarchy *hierarchy.Service
-	logger    *slog.Logger
 }
 
-// NewService 创建支付中台服务
-func NewService(db *pgxpool.Pool, hierarchySvc *hierarchy.Service) *Service {
-	return &Service{
-		db:        db,
-		hierarchy: hierarchySvc,
-		logger:    slog.Default().With("module", "payment"),
-	}
+// NewService 创建服务
+func NewService(db *gorm.DB, h *hierarchy.Service) *Service {
+	return &Service{db: db, hierarchy: h}
 }
 
-// CreateChannelInput 创建支付渠道入参
+// ========== 渠道管理（开发商顶层集权） ==========
+
+// CreateChannelInput 创建渠道入参（仅开发商）
 type CreateChannelInput struct {
-	TenantID   string      `json:"tenant_id"`
-	Type       ChannelType `json:"type"`
-	Name       string      `json:"name"`
-	AppID      string      `json:"app_id"`
-	MerchantID string      `json:"merchant_id"`
-	SecretKey  string      `json:"secret_key"`
-	NotifyURL  string      `json:"notify_url"`
+	TenantID   string                   `json:"tenant_id" binding:"required"`
+	Type       model.PaymentChannelType `json:"type" binding:"required"`
+	Name       string                   `json:"name" binding:"required,max=100"`
+	AppID      string                   `json:"app_id"`
+	MerchantID string                   `json:"merchant_id"`
+	SecretKey  string                   `json:"secret_key"`
+	NotifyURL  string                   `json:"notify_url"`
 }
 
-// CreateChannel 创建支付渠道（仅开发商可创建顶级渠道）
-func (s *Service) CreateChannel(ctx context.Context, operatorLevel string, input *CreateChannelInput) (*Channel, error) {
-	// 校验权限：只有开发商可以创建支付渠道
-	if !s.hierarchy.CanAccess(operatorLevel, hierarchy.LevelDeveloper) {
-		return nil, fmt.Errorf("仅开发商层级可创建支付渠道")
+// CreateChannel 创建支付渠道（顶层准入）
+func (s *Service) CreateChannel(ctx context.Context, operatorLevel string, in *CreateChannelInput) (*model.PaymentChannel, error) {
+	if operatorLevel != hierarchy.LevelDeveloper {
+		return nil, errors.New("仅开发商层级可创建支付渠道")
 	}
 
-	channel := &Channel{
-		ID:         uuid.New().String(),
-		TenantID:   input.TenantID,
-		Level:      operatorLevel,
-		Type:       input.Type,
-		Name:       input.Name,
-		AppID:      input.AppID,
-		MerchantID: input.MerchantID,
-		SecretKey:  input.SecretKey,
-		NotifyURL:  input.NotifyURL,
-		Status:     1,
-		CreatedAt:  time.Now(),
-		UpdatedAt:  time.Now(),
+	ch := &model.PaymentChannel{
+		TenantID:   in.TenantID,
+		Level:      model.LevelDeveloper,
+		Type:       in.Type,
+		Name:       in.Name,
+		AppID:      in.AppID,
+		MerchantID: in.MerchantID,
+		SecretKey:  in.SecretKey,
+		NotifyURL:  in.NotifyURL,
+		Status:     model.StatusEnabled,
 	}
-
-	query := `INSERT INTO payment_channels (id, tenant_id, level, type, name, app_id, merchant_id, secret_key, notify_url, status, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`
-
-	_, err := s.db.Exec(ctx, query,
-		channel.ID, channel.TenantID, channel.Level, channel.Type,
-		channel.Name, channel.AppID, channel.MerchantID, channel.SecretKey,
-		channel.NotifyURL, channel.Status, channel.CreatedAt, channel.UpdatedAt,
-	)
-	if err != nil {
+	if err := s.db.WithContext(ctx).Create(ch).Error; err != nil {
 		return nil, fmt.Errorf("创建支付渠道失败: %w", err)
 	}
-
-	s.logger.Info("支付渠道创建成功", "id", channel.ID, "type", channel.Type)
-	return channel, nil
+	logger.WithContext(ctx).Info("支付渠道已创建",
+		zap.String("id", ch.ID), zap.String("type", string(ch.Type)),
+	)
+	return ch, nil
 }
 
-// GetAvailableChannels 获取租户可用的支付渠道
-// 三级权限管控：终端客户只能使用服务商授权的渠道，服务商只能使用开发商配置的渠道
-func (s *Service) GetAvailableChannels(ctx context.Context, tenantID string) ([]*Channel, error) {
-	// 获取租户的上级链路，查找所有可用渠道
-	query := `SELECT pc.id, pc.tenant_id, pc.level, pc.type, pc.name, pc.app_id, pc.merchant_id, pc.notify_url, pc.status, pc.created_at, pc.updated_at
-		FROM payment_channels pc
-		INNER JOIN tenant_payment_auth tpa ON pc.id = tpa.channel_id
-		WHERE tpa.tenant_id = $1 AND tpa.status = 1 AND pc.status = 1`
-
-	rows, err := s.db.Query(ctx, query, tenantID)
-	if err != nil {
-		return nil, fmt.Errorf("查询可用支付渠道失败: %w", err)
+// ToggleChannel 启用/禁用渠道（顶层关闭 → 级联所有下级失效）
+func (s *Service) ToggleChannel(ctx context.Context, operatorLevel, channelID string, enabled bool) error {
+	if operatorLevel != hierarchy.LevelDeveloper {
+		return errors.New("仅开发商可启用/禁用支付渠道")
 	}
-	defer rows.Close()
-
-	var channels []*Channel
-	for rows.Next() {
-		ch := &Channel{}
-		if err := rows.Scan(
-			&ch.ID, &ch.TenantID, &ch.Level, &ch.Type, &ch.Name,
-			&ch.AppID, &ch.MerchantID, &ch.NotifyURL, &ch.Status,
-			&ch.CreatedAt, &ch.UpdatedAt,
-		); err != nil {
-			return nil, err
+	status := model.StatusEnabled
+	if !enabled {
+		status = model.StatusDisabled
+	}
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&model.PaymentChannel{}).
+			Where("id = ?", channelID).
+			Update("status", status).Error; err != nil {
+			return err
 		}
-		channels = append(channels, ch)
+		// 渠道关闭 → 对应授权记录同步失效
+		if !enabled {
+			if err := tx.Model(&model.TenantPaymentAuth{}).
+				Where("channel_id = ?", channelID).
+				Update("status", model.StatusDisabled).Error; err != nil {
+				return err
+			}
+			logger.WithContext(ctx).Info("渠道关闭，级联授权失效", zap.String("channel_id", channelID))
+		}
+		return nil
+	})
+}
+
+// GrantInput 授权入参（上级授予下级可用渠道）
+type GrantInput struct {
+	GranterTenantID string `json:"granter_tenant_id" binding:"required"`
+	GranteeTenantID string `json:"grantee_tenant_id" binding:"required"`
+	ChannelID       string `json:"channel_id" binding:"required"`
+}
+
+// GrantChannel 授予渠道使用权（开发商→服务商 / 服务商→终端客户）
+func (s *Service) GrantChannel(ctx context.Context, in *GrantInput) error {
+	if err := s.hierarchy.ValidateControlFlow(ctx, in.GranterTenantID, in.GranteeTenantID); err != nil {
+		return fmt.Errorf("授权失败: %w", err)
 	}
 
-	return channels, nil
+	return s.db.WithContext(ctx).Exec(`
+INSERT INTO tenant_payment_auth (id, tenant_id, channel_id, granted_by, status, created_at, updated_at)
+VALUES (uuid_generate_v4(), ?, ?, ?, 1, NOW(), NOW())
+ON CONFLICT (tenant_id, channel_id)
+DO UPDATE SET status = 1, granted_by = EXCLUDED.granted_by, updated_at = NOW()`,
+		in.GranteeTenantID, in.ChannelID, in.GranterTenantID,
+	).Error
 }
+
+// RevokeChannel 回收渠道使用权（级联所有下级）
+func (s *Service) RevokeChannel(ctx context.Context, revokerID, targetID, channelID string) error {
+	if err := s.hierarchy.ValidateControlFlow(ctx, revokerID, targetID); err != nil {
+		return err
+	}
+	descendants, err := s.hierarchy.GetDescendants(ctx, targetID)
+	if err != nil {
+		return err
+	}
+	affected := append([]string{targetID}, descendants...)
+	return s.db.WithContext(ctx).Model(&model.TenantPaymentAuth{}).
+		Where("tenant_id IN ? AND channel_id = ?", affected, channelID).
+		Update("status", model.StatusDisabled).Error
+}
+
+// GetAvailableChannels 获取租户可用的支付渠道（沿三级授权链路）
+func (s *Service) GetAvailableChannels(ctx context.Context, tenantID string) ([]*model.PaymentChannel, error) {
+	var list []*model.PaymentChannel
+	err := s.db.WithContext(ctx).
+		Model(&model.PaymentChannel{}).
+		Joins("INNER JOIN tenant_payment_auth tpa ON payment_channels.id = tpa.channel_id").
+		Where("tpa.tenant_id = ? AND tpa.status = 1 AND payment_channels.status = 1", tenantID).
+		Find(&list).Error
+	return list, err
+}
+
+// ========== 订单能力 ==========
 
 // CreateOrderInput 创建订单入参
 type CreateOrderInput struct {
-	TenantID  string `json:"tenant_id"`
-	ChannelID string `json:"channel_id"`
-	OrderNo   string `json:"order_no"`
-	Amount    int64  `json:"amount"`
+	TenantID  string `json:"tenant_id" binding:"required"`
+	ChannelID string `json:"channel_id" binding:"required"`
+	OrderNo   string `json:"order_no" binding:"required,max=64"`
+	Amount    int64  `json:"amount" binding:"required,gt=0"` // 分
 	Currency  string `json:"currency"`
-	Subject   string `json:"subject"`
+	Subject   string `json:"subject" binding:"max=200"`
 }
 
-// CreateOrder 创建支付订单（统一下单）
-func (s *Service) CreateOrder(ctx context.Context, input *CreateOrderInput) (*Order, error) {
-	order := &Order{
-		ID:        uuid.New().String(),
-		TenantID:  input.TenantID,
-		ChannelID: input.ChannelID,
-		OrderNo:   input.OrderNo,
-		Amount:    input.Amount,
-		Currency:  input.Currency,
-		Subject:   input.Subject,
-		Status:    OrderPending,
-		CreatedAt: time.Now(),
-		UpdatedAt: time.Now(),
+// CreateOrder 统一下单
+func (s *Service) CreateOrder(ctx context.Context, in *CreateOrderInput) (*model.PaymentOrder, error) {
+	// 校验：该租户是否有权使用该渠道
+	var cnt int64
+	if err := s.db.WithContext(ctx).Model(&model.TenantPaymentAuth{}).
+		Where("tenant_id = ? AND channel_id = ? AND status = 1", in.TenantID, in.ChannelID).
+		Count(&cnt).Error; err != nil {
+		return nil, fmt.Errorf("校验渠道授权失败: %w", err)
+	}
+	if cnt == 0 {
+		return nil, errors.New("当前租户未被授权使用该支付渠道")
 	}
 
-	query := `INSERT INTO payment_orders (id, tenant_id, channel_id, order_no, amount, currency, subject, status, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`
+	// 查询渠道类型
+	var ch model.PaymentChannel
+	if err := s.db.WithContext(ctx).First(&ch, "id = ?", in.ChannelID).Error; err != nil {
+		return nil, fmt.Errorf("渠道不存在: %w", err)
+	}
 
-	_, err := s.db.Exec(ctx, query,
-		order.ID, order.TenantID, order.ChannelID, order.OrderNo,
-		order.Amount, order.Currency, order.Subject, order.Status,
-		order.CreatedAt, order.UpdatedAt,
+	currency := in.Currency
+	if currency == "" {
+		currency = "CNY"
+	}
+
+	order := &model.PaymentOrder{
+		TenantID:    in.TenantID,
+		ChannelID:   in.ChannelID,
+		ChannelType: ch.Type,
+		OrderNo:     in.OrderNo,
+		Amount:      in.Amount,
+		Currency:    currency,
+		Subject:     in.Subject,
+		Status:      model.OrderPending,
+	}
+	if err := s.db.WithContext(ctx).Create(order).Error; err != nil {
+		return nil, fmt.Errorf("创建订单失败: %w", err)
+	}
+	logger.WithContext(ctx).Info("支付订单已创建",
+		zap.String("order_id", order.ID),
+		zap.String("order_no", order.OrderNo),
+		zap.Int64("amount", order.Amount),
 	)
-	if err != nil {
-		return nil, fmt.Errorf("创建支付订单失败: %w", err)
-	}
-
-	s.logger.Info("支付订单创建成功", "order_id", order.ID, "amount", order.Amount)
 	return order, nil
 }
 
-// HandleCallback 处理支付回调
-func (s *Service) HandleCallback(ctx context.Context, channelID, tradeNo string) error {
-	query := `UPDATE payment_orders SET status = $1, trade_no = $2, paid_at = $3, updated_at = $3
-		WHERE channel_id = $4 AND status = $5`
-
+// HandleCallback 处理支付回调（根据订单号幂等更新）
+func (s *Service) HandleCallback(ctx context.Context, orderNo, tradeNo string) error {
 	now := time.Now()
-	_, err := s.db.Exec(ctx, query, OrderPaid, tradeNo, now, channelID, OrderPending)
-	if err != nil {
-		return fmt.Errorf("更新订单状态失败: %w", err)
+	res := s.db.WithContext(ctx).Model(&model.PaymentOrder{}).
+		Where("order_no = ? AND status = ?", orderNo, model.OrderPending).
+		Updates(map[string]any{
+			"status":   model.OrderPaid,
+			"trade_no": tradeNo,
+			"paid_at":  now,
+		})
+	if res.Error != nil {
+		return fmt.Errorf("更新订单状态失败: %w", res.Error)
 	}
-
+	if res.RowsAffected == 0 {
+		return errors.New("订单状态非待支付，回调忽略")
+	}
 	return nil
 }
 
-// Refund 退款
+// Refund 发起退款
 func (s *Service) Refund(ctx context.Context, orderID string, amount int64) error {
-	query := `UPDATE payment_orders SET status = $1, updated_at = $2 WHERE id = $3 AND status = $4`
-	_, err := s.db.Exec(ctx, query, OrderRefunding, time.Now(), orderID, OrderPaid)
-	if err != nil {
-		return fmt.Errorf("发起退款失败: %w", err)
+	res := s.db.WithContext(ctx).Model(&model.PaymentOrder{}).
+		Where("id = ? AND status = ?", orderID, model.OrderPaid).
+		Update("status", model.OrderRefunding)
+	if res.Error != nil {
+		return fmt.Errorf("发起退款失败: %w", res.Error)
 	}
-
-	// TODO: 调用第三方退款接口
-	s.logger.Info("退款申请已提交", "order_id", orderID, "amount", amount)
+	if res.RowsAffected == 0 {
+		return errors.New("订单状态非已支付，无法退款")
+	}
+	// TODO: 调用第三方渠道实际退款接口
+	logger.WithContext(ctx).Info("退款申请已提交",
+		zap.String("order_id", orderID), zap.Int64("amount", amount),
+	)
 	return nil
 }
