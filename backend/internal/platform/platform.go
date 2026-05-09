@@ -1,7 +1,8 @@
+// Package platform 三大统一中台聚合器：支付 / 存储 / 通知
 package platform
 
 import (
-	"github.com/jackc/pgx/v5/pgxpool"
+	"gorm.io/gorm"
 
 	"github.com/zhongjinmuai-lang/mu-framework/internal/platform/notify"
 	"github.com/zhongjinmuai-lang/mu-framework/internal/platform/payment"
@@ -10,7 +11,6 @@ import (
 )
 
 // Manager 中台总管理器
-// 统一管理三大中台：支付、存储、通知
 type Manager struct {
 	Payment *payment.Service
 	Storage *storage.Service
@@ -18,10 +18,10 @@ type Manager struct {
 }
 
 // NewManager 创建中台管理器
-func NewManager(db *pgxpool.Pool, hierarchySvc *hierarchy.Service) *Manager {
+func NewManager(db *gorm.DB, h *hierarchy.Service) *Manager {
 	return &Manager{
-		Payment: payment.NewService(db, hierarchySvc),
-		Storage: storage.NewService(db, hierarchySvc),
-		Notify:  notify.NewService(db, hierarchySvc),
+		Payment: payment.NewService(db, h),
+		Storage: storage.NewService(db, h),
+		Notify:  notify.NewService(db, h),
 	}
 }

@@ -1,15 +1,19 @@
+// Package engine MU智能体调度引擎：任务队列 + 工作池 + 插件协同 + 运行统计
 package engine
 
 import (
 	"context"
-	"log/slog"
+	"errors"
+	"fmt"
 	"sync"
 	"time"
 
 	"github.com/google/uuid"
+	"go.uber.org/zap"
 
 	"github.com/zhongjinmuai-lang/mu-framework/internal/agent/plugin"
 	"github.com/zhongjinmuai-lang/mu-framework/internal/core/config"
+	"github.com/zhongjinmuai-lang/mu-framework/pkg/logger"
 )
 
 // TaskPriority 任务优先级
@@ -37,15 +41,15 @@ const (
 type Task struct {
 	ID        string       `json:"id"`
 	Name      string       `json:"name"`
-	Type      string       `json:"type"`      // 任务类型
-	Payload   string       `json:"payload"`   // 任务载荷（JSON）
+	Type      string       `json:"type"`
+	Payload   string       `json:"payload"`
 	Priority  TaskPriority `json:"priority"`
 	Status    TaskStatus   `json:"status"`
 	Result    string       `json:"result"`
 	Error     string       `json:"error"`
 	CreatedAt time.Time    `json:"created_at"`
-	StartedAt *time.Time   `json:"started_at"`
-	DoneAt    *time.Time   `json:"done_at"`
+	StartedAt *time.Time   `json:"started_at,omitempty"`
+	DoneAt    *time.Time   `json:"done_at,omitempty"`
 }
 
 // TaskHandler 任务处理函数
@@ -53,19 +57,18 @@ type TaskHandler func(ctx context.Context, task *Task) (string, error)
 
 // Engine MU智能体调度引擎
 type Engine struct {
-	cfg           *config.Config
-	pluginMgr     *plugin.Manager
-	taskQueue     chan *Task
-	handlers      map[string]TaskHandler
-	workers       int
-	logger        *slog.Logger
-	ctx           context.Context
-	cancel        context.CancelFunc
-	wg            sync.WaitGroup
-	mu            sync.RWMutex
+	cfg       *config.Config
+	pluginMgr *plugin.Manager
+	taskQueue chan *Task
+	handlers  map[string]TaskHandler
+	workers   int
 
-	// 运行统计
-	stats         *Stats
+	ctx    context.Context
+	cancel context.CancelFunc
+	wg     sync.WaitGroup
+	mu     sync.RWMutex
+
+	stats *Stats
 }
 
 // Stats 引擎运行统计
@@ -80,57 +83,53 @@ type Stats struct {
 	Uptime         string    `json:"uptime"`
 }
 
-// New 创建智能体引擎
+// New 创建引擎
 func New(cfg *config.Config) (*Engine, error) {
+	if cfg == nil {
+		return nil, errors.New("配置不能为空")
+	}
 	ctx, cancel := context.WithCancel(context.Background())
-
-	eng := &Engine{
+	return &Engine{
 		cfg:       cfg,
 		pluginMgr: plugin.NewManager(),
 		taskQueue: make(chan *Task, cfg.Agent.TaskQueueSize),
 		handlers:  make(map[string]TaskHandler),
 		workers:   cfg.Agent.MaxWorkers,
-		logger:    slog.Default().With("module", "agent-engine"),
 		ctx:       ctx,
 		cancel:    cancel,
-		stats: &Stats{
-			StartedAt: time.Now(),
-		},
-	}
-
-	return eng, nil
+		stats:     &Stats{StartedAt: time.Now()},
+	}, nil
 }
 
 // Start 启动引擎
 func (e *Engine) Start() error {
-	e.logger.Info("智能体引擎启动中...", "workers", e.workers)
+	logger.L().Info("智能体引擎启动中", zap.Int("workers", e.workers))
 
-	// 启动工作协程池
 	for i := 0; i < e.workers; i++ {
 		e.wg.Add(1)
 		go e.worker(i)
 	}
-
-	// 启动插件系统
 	if err := e.pluginMgr.StartAll(); err != nil {
-		e.logger.Error("插件系统启动异常", "error", err)
+		logger.L().Error("插件系统启动异常", zap.Error(err))
 	}
 
-	// 启动健康检查定时器
 	e.wg.Add(1)
 	go e.healthCheckLoop()
 
-	e.logger.Info("智能体引擎已启动", "workers", e.workers, "queue_size", e.cfg.Agent.TaskQueueSize)
+	logger.L().Info("智能体引擎已启动",
+		zap.Int("workers", e.workers),
+		zap.Int("queue_size", e.cfg.Agent.TaskQueueSize),
+	)
 	return nil
 }
 
-// Stop 停止引擎
+// Stop 优雅停止
 func (e *Engine) Stop() {
-	e.logger.Info("正在停止智能体引擎...")
+	logger.L().Info("正在停止智能体引擎")
 	e.cancel()
 	e.wg.Wait()
 	close(e.taskQueue)
-	e.logger.Info("智能体引擎已停止")
+	logger.L().Info("智能体引擎已停止")
 }
 
 // Submit 提交任务
@@ -146,7 +145,6 @@ func (e *Engine) Submit(task *Task) error {
 		e.stats.mu.Lock()
 		e.stats.TotalTasks++
 		e.stats.mu.Unlock()
-		e.logger.Info("任务已提交", "task_id", task.ID, "type", task.Type, "priority", task.Priority)
 		return nil
 	default:
 		return fmt.Errorf("任务队列已满（容量：%d）", e.cfg.Agent.TaskQueueSize)
@@ -154,19 +152,17 @@ func (e *Engine) Submit(task *Task) error {
 }
 
 // RegisterHandler 注册任务处理器
-func (e *Engine) RegisterHandler(taskType string, handler TaskHandler) {
+func (e *Engine) RegisterHandler(taskType string, h TaskHandler) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	e.handlers[taskType] = handler
-	e.logger.Info("任务处理器已注册", "type", taskType)
+	e.handlers[taskType] = h
+	logger.L().Info("任务处理器已注册", zap.String("type", taskType))
 }
 
-// GetPluginManager 获取插件管理器
-func (e *Engine) GetPluginManager() *plugin.Manager {
-	return e.pluginMgr
-}
+// GetPluginManager 暴露插件管理器
+func (e *Engine) GetPluginManager() *plugin.Manager { return e.pluginMgr }
 
-// GetStats 获取引擎状态
+// GetStats 获取运行统计快照
 func (e *Engine) GetStats() *Stats {
 	e.stats.mu.Lock()
 	defer e.stats.mu.Unlock()
@@ -175,10 +171,10 @@ func (e *Engine) GetStats() *Stats {
 	return e.stats
 }
 
-// worker 工作协程
+// ========== 内部 ==========
+
 func (e *Engine) worker(id int) {
 	defer e.wg.Done()
-
 	for {
 		select {
 		case <-e.ctx.Done():
@@ -192,7 +188,6 @@ func (e *Engine) worker(id int) {
 	}
 }
 
-// executeTask 执行任务
 func (e *Engine) executeTask(workerID int, task *Task) {
 	e.mu.RLock()
 	handler, exists := e.handlers[task.Type]
@@ -201,13 +196,10 @@ func (e *Engine) executeTask(workerID int, task *Task) {
 	if !exists {
 		task.Status = TaskFailed
 		task.Error = fmt.Sprintf("未注册的任务类型: %s", task.Type)
-		e.stats.mu.Lock()
-		e.stats.FailedTasks++
-		e.stats.mu.Unlock()
+		e.bumpFailed()
 		return
 	}
 
-	// 执行任务
 	now := time.Now()
 	task.Status = TaskRunning
 	task.StartedAt = &now
@@ -222,56 +214,55 @@ func (e *Engine) executeTask(workerID int, task *Task) {
 	e.stats.ActiveWorkers--
 	e.stats.mu.Unlock()
 
-	doneAt := time.Now()
-	task.DoneAt = &doneAt
-
+	done := time.Now()
+	task.DoneAt = &done
 	if err != nil {
 		task.Status = TaskFailed
 		task.Error = err.Error()
-		e.stats.mu.Lock()
-		e.stats.FailedTasks++
-		e.stats.mu.Unlock()
-		e.logger.Error("任务执行失败",
-			"task_id", task.ID,
-			"worker", workerID,
-			"error", err,
-			"duration", doneAt.Sub(now).String(),
+		e.bumpFailed()
+		logger.L().Error("任务执行失败",
+			zap.String("task_id", task.ID),
+			zap.Int("worker", workerID),
+			zap.Error(err),
+			zap.Duration("duration", done.Sub(now)),
 		)
-	} else {
-		task.Status = TaskCompleted
-		task.Result = result
-		e.stats.mu.Lock()
-		e.stats.CompletedTasks++
-		e.stats.mu.Unlock()
-		e.logger.Info("任务执行完成",
-			"task_id", task.ID,
-			"worker", workerID,
-			"duration", doneAt.Sub(now).String(),
-		)
+		return
 	}
+	task.Status = TaskCompleted
+	task.Result = result
+	e.stats.mu.Lock()
+	e.stats.CompletedTasks++
+	e.stats.mu.Unlock()
+	logger.L().Info("任务执行完成",
+		zap.String("task_id", task.ID),
+		zap.Int("worker", workerID),
+		zap.Duration("duration", done.Sub(now)),
+	)
 }
 
-// healthCheckLoop 健康检查循环
+func (e *Engine) bumpFailed() {
+	e.stats.mu.Lock()
+	e.stats.FailedTasks++
+	e.stats.mu.Unlock()
+}
+
 func (e *Engine) healthCheckLoop() {
 	defer e.wg.Done()
-
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
-
 	for {
 		select {
 		case <-e.ctx.Done():
 			return
 		case <-ticker.C:
-			results := e.pluginMgr.HealthCheck()
-			for id, status := range results {
-				if !status.Healthy {
-					e.logger.Warn("插件健康检查异常", "plugin_id", id, "message", status.Message)
+			for id, st := range e.pluginMgr.HealthCheck() {
+				if !st.Healthy {
+					logger.L().Warn("插件健康检查异常",
+						zap.String("plugin_id", id),
+						zap.String("message", st.Message),
+					)
 				}
 			}
 		}
 	}
 }
-
-// fmt import needed
-import "fmt"

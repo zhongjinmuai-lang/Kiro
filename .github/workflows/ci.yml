@@ -1,0 +1,97 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+jobs:
+  # ========== 后端 Go ==========
+  backend:
+    name: Backend (Go 1.26.1)
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:18.3-alpine
+        env:
+          POSTGRES_USER: mu_admin
+          POSTGRES_PASSWORD: mu_secret_ci
+          POSTGRES_DB: mu_framework_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready --health-interval 10s
+          --health-timeout 5s --health-retries 5
+      redis:
+        image: redis:7.4-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 5s
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.1"
+          cache: true
+          cache-dependency-path: backend/go.sum
+      - name: Vet
+        working-directory: backend
+        run: go vet ./...
+      - name: Build
+        working-directory: backend
+        run: |
+          go build -o /tmp/api-server     ./cmd/api-server
+          go build -o /tmp/admin-server   ./cmd/admin-server
+          go build -o /tmp/agent-engine   ./cmd/agent-engine
+      - name: Test
+        working-directory: backend
+        env:
+          MU_DB_HOST: localhost
+          MU_DB_PASSWORD: mu_secret_ci
+          MU_REDIS_ADDR: localhost:6379
+        run: go test -race -coverprofile=coverage.out ./...
+
+  # ========== 前端 Vue3 三端 ==========
+  frontend:
+    name: Frontend (Vue 3.5)
+    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        project: [admin-developer, admin-provider, admin-customer]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/${{ matrix.project }}/package-lock.json
+      - name: Install
+        working-directory: frontend/${{ matrix.project }}
+        run: npm ci || npm install
+      - name: Build
+        working-directory: frontend/${{ matrix.project }}
+        run: npm run build
+
+  # ========== 镜像构建（仅 main 分支） ==========
+  docker:
+    name: Docker Image
+    if: github.ref == 'refs/heads/main'
+    needs: [backend, frontend]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build backend image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/docker/Dockerfile.backend
+          push: false
+          tags: mu-framework/backend:${{ github.sha }}
+      - name: Build frontend image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/docker/Dockerfile.frontend
+          push: false
+          tags: mu-framework/frontend:${{ github.sha }}

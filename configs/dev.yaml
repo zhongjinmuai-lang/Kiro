@@ -1,43 +1,86 @@
+# ============================================================
+# MU Framework 开发环境配置
+# 技术栈：Go 1.26.1 + Gin + GORM v2 + PostgreSQL 18.3 + Redis 7.4.x
+# 支持环境变量覆盖：MU_DATABASE_PASSWORD / MU_JWT_SECRET 等
+# ============================================================
+
+app:
+  name:    mu-framework
+  version: 1.0.0
+  env:     dev
+
 server:
-  port: 8080
-  admin_port: 8081
-  agent_port: 8082
-  mode: dev
+  port:          8080     # API Server（终端客户业务接口）
+  admin_port:    8081     # Admin Server（三级管理后台）
+  agent_port:    8082     # Agent Engine（智能体引擎）
+  mode:          debug    # debug / release / test
+  read_timeout:  30s
+  write_timeout: 30s
+  idle_timeout:  60s
 
 database:
-  host: localhost
-  port: 5432
-  user: mu_admin
-  password: mu_secret_dev
-  dbname: mu_framework
-  sslmode: disable
-  max_conns: 20
-  min_conns: 5
+  host:               localhost
+  port:               5432
+  user:               mu_admin
+  password:           mu_secret_dev
+  dbname:             mu_framework
+  sslmode:            disable
+  timezone:           Asia/Shanghai
+  max_open_conns:     20
+  max_idle_conns:     5
+  conn_max_lifetime:  1h
+  conn_max_idle_time: 10m
+  log_sql:            true
+  slow_threshold:     200ms
 
 redis:
-  addr: localhost:6379
-  password: ""
-  db: 0
+  mode:      standalone        # standalone / cluster / sentinel
+  addr:      localhost:6379
+  password:  ""
+  db:        0
   pool_size: 10
+  min_idle:  2
+  # 集群示例（生产环境）：
+  # mode:  cluster
+  # addrs: ["redis-node-1:6379", "redis-node-2:6379", "redis-node-3:6379"]
+
+logger:
+  level:       debug            # debug / info / warn / error
+  format:      console          # json / console（开发态用带颜色的console）
+  output:      stdout           # stdout / file / both
+  dir:         ./logs
+  file_name:   mu-framework.log
+  max_size:    100              # 单文件MB
+  max_age:     30               # 保留天数
+  max_backups: 10
+  compress:    true
+  caller:      true
+  stacktrace:  true
 
 jwt:
-  secret: mu-dev-secret-key-change-in-prod
-  expire_hour: 24
-  issuer: mu-framework
+  secret:               mu-dev-secret-key-please-change-in-production
+  issuer:               mu-framework
+  access_ttl:           2h
+  refresh_ttl:          168h            # 7 天
+  auto_renew_threshold: 15m             # 剩余时间低于阈值时在响应头签发新令牌
 
 agent:
-  plugin_dir: ./plugins
-  max_workers: 10
+  plugin_dir:      ./plugins
+  max_workers:     10
   task_queue_size: 1000
-  evolution_cycle: 3600
+  evolution_cycle: 3600                  # 自进化周期（秒）
 
 platform:
   payment:
     enabled: true
-    provider: wechat
   storage:
-    enabled: true
-    provider: local
+    enabled:   true
     base_path: ./storage
   notify:
     enabled: true
+
+swagger:
+  enabled: true
+  path:    /swagger/*any
+  title:   MU Framework API
+  version: v1

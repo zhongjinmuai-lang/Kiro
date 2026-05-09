@@ -1,49 +1,78 @@
+// Command agent-engine MU智能体引擎服务：插件热插拔 / AI调度 / 自进化
 package main
 
 import (
-	"log/slog"
+	"context"
+	"flag"
+	"fmt"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
+
+	"go.uber.org/zap"
 
 	"github.com/zhongjinmuai-lang/mu-framework/internal/agent/engine"
+	"github.com/zhongjinmuai-lang/mu-framework/internal/core/bootstrap"
 	"github.com/zhongjinmuai-lang/mu-framework/internal/core/config"
+	"github.com/zhongjinmuai-lang/mu-framework/internal/core/router"
+	"github.com/zhongjinmuai-lang/mu-framework/pkg/logger"
 )
 
 func main() {
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
-		Level: slog.LevelInfo,
-	}))
-	slog.SetDefault(logger)
+	cfgPath := flag.String("config", "configs/dev.yaml", "配置文件路径")
+	flag.Parse()
 
-	slog.Info("MU Agent Engine 启动中...")
-
-	cfg, err := config.Load("configs/dev.yaml")
+	cfg, err := config.Load(*cfgPath)
 	if err != nil {
-		slog.Error("配置加载失败", "error", err)
+		fmt.Fprintf(os.Stderr, "加载配置失败: %v\n", err)
 		os.Exit(1)
 	}
+
+	app, err := bootstrap.NewApp(cfg)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "应用初始化失败: %v\n", err)
+		os.Exit(1)
+	}
+	defer app.Shutdown()
 
 	// 启动智能体引擎
 	eng, err := engine.New(cfg)
 	if err != nil {
-		slog.Error("智能体引擎初始化失败", "error", err)
-		os.Exit(1)
+		logger.L().Fatal("智能体引擎初始化失败", zap.Error(err))
 	}
-
 	if err := eng.Start(); err != nil {
-		slog.Error("智能体引擎启动失败", "error", err)
-		os.Exit(1)
+		logger.L().Fatal("智能体引擎启动失败", zap.Error(err))
+	}
+	defer eng.Stop()
+
+	// 启动 HTTP 管理接口
+	ginEngine := router.NewAgentEngine(app)
+	srv := &http.Server{
+		Addr:         fmt.Sprintf(":%d", cfg.Server.AgentPort),
+		Handler:      ginEngine,
+		ReadTimeout:  cfg.Server.ReadTimeout,
+		WriteTimeout: cfg.Server.WriteTimeout,
+		IdleTimeout:  cfg.Server.IdleTimeout,
 	}
 
-	slog.Info("MU Agent Engine 已启动")
+	go func() {
+		logger.L().Info("Agent Engine 已启动", zap.Int("port", cfg.Server.AgentPort))
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			logger.L().Fatal("服务启动失败", zap.Error(err))
+		}
+	}()
 
-	// 等待终止信号
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 
-	slog.Info("正在关闭智能体引擎...")
-	eng.Stop()
-	slog.Info("MU Agent Engine 已停止")
+	logger.L().Info("正在优雅关闭 Agent Engine")
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := srv.Shutdown(ctx); err != nil {
+		logger.L().Error("服务关闭异常", zap.Error(err))
+	}
+	logger.L().Info("Agent Engine 已停止")
 }
