@@ -1,0 +1,82 @@
+# ============================================================
+# MU Framework 预发布环境（Staging）
+# 与生产基本一致，Swagger 保持开启、日志级别调至 debug 便于排查
+# ============================================================
+
+app:
+  name:    mu-framework
+  version: 1.0.0
+  env:     staging
+
+server:
+  port:          8080
+  admin_port:    8081
+  agent_port:    8082
+  mode:          release
+  read_timeout:  30s
+  write_timeout: 30s
+  idle_timeout:  60s
+
+database:
+  host:               ${MU_DATABASE_HOST}
+  port:               5432
+  user:               ${MU_DATABASE_USER}
+  password:           ${MU_DATABASE_PASSWORD}
+  dbname:             mu_framework_staging
+  sslmode:            prefer
+  timezone:           Asia/Shanghai
+  max_open_conns:     50
+  max_idle_conns:     10
+  conn_max_lifetime:  1h
+  conn_max_idle_time: 10m
+  log_sql:            true
+  slow_threshold:     300ms
+
+redis:
+  mode:      standalone
+  addr:      ${MU_REDIS_ADDR}
+  password:  ${MU_REDIS_PASSWORD}
+  db:        0
+  pool_size: 30
+  min_idle:  5
+
+logger:
+  level:       debug
+  format:      json
+  output:      both
+  dir:         /var/log/mu-framework
+  file_name:   mu-framework.log
+  max_size:    100
+  max_age:     30
+  max_backups: 10
+  compress:    true
+  caller:      true
+  stacktrace:  true
+
+jwt:
+  secret:               ${MU_JWT_SECRET}
+  issuer:               mu-framework
+  access_ttl:           2h
+  refresh_ttl:          168h
+  auto_renew_threshold: 15m
+
+agent:
+  plugin_dir:      /app/plugins
+  max_workers:     20
+  task_queue_size: 2000
+  evolution_cycle: 1800
+
+platform:
+  payment:
+    enabled: true
+  storage:
+    enabled:   true
+    base_path: /data/storage
+  notify:
+    enabled: true
+
+swagger:
+  enabled: true
+  path:    /swagger/*any
+  title:   MU Framework API (Staging)
+  version: v1

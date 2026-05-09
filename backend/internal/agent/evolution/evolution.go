@@ -21,9 +21,9 @@ const (
 type Event struct {
 	ID        string    `json:"id"`
 	Strategy  Strategy  `json:"strategy"`
-	Target    string    `json:"target"`    // 目标组件
-	Trigger   string    `json:"trigger"`   // 触发原因
-	Action    string    `json:"action"`    // 执行动作
+	Target    string    `json:"target"`  // 目标组件
+	Trigger   string    `json:"trigger"` // 触发原因
+	Action    string    `json:"action"`  // 执行动作
 	Result    string    `json:"result"`
 	Success   bool      `json:"success"`
 	CreatedAt time.Time `json:"created_at"`
@@ -31,18 +31,18 @@ type Event struct {
 
 // MetricSnapshot 指标快照
 type MetricSnapshot struct {
-	Timestamp    time.Time `json:"timestamp"`
-	CPUUsage     float64   `json:"cpu_usage"`
-	MemUsage     float64   `json:"mem_usage"`
-	TaskSuccess  float64   `json:"task_success_rate"`
-	AvgLatency   float64   `json:"avg_latency_ms"`
-	ErrorRate    float64   `json:"error_rate"`
-	QueueDepth   int       `json:"queue_depth"`
+	Timestamp   time.Time `json:"timestamp"`
+	CPUUsage    float64   `json:"cpu_usage"`
+	MemUsage    float64   `json:"mem_usage"`
+	TaskSuccess float64   `json:"task_success_rate"`
+	AvgLatency  float64   `json:"avg_latency_ms"`
+	ErrorRate   float64   `json:"error_rate"`
+	QueueDepth  int       `json:"queue_depth"`
 }
 
 // Rule 进化规则
 type Rule struct {
-	Name      string   `json:"name"`
+	Name      string `json:"name"`
 	Condition func(snapshot *MetricSnapshot) bool
 	Strategy  Strategy `json:"strategy"`
 	Action    func(ctx context.Context) error
@@ -51,11 +51,11 @@ type Rule struct {
 // Service 自进化服务
 // 实现自进化、自升级、自修复三大能力
 type Service struct {
-	rules    []Rule
-	history  []*Event
-	metrics  []*MetricSnapshot
-	logger   *slog.Logger
-	mu       sync.Mutex
+	rules   []Rule
+	history []*Event
+	metrics []*MetricSnapshot
+	logger  *slog.Logger
+	mu      sync.Mutex
 
 	// 配置
 	cycleInterval time.Duration // 进化周期

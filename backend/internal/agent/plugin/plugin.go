@@ -21,14 +21,14 @@ const (
 
 // Meta 插件元信息
 type Meta struct {
-	ID          string   `json:"id"`
-	Name        string   `json:"name"`
-	Version     string   `json:"version"`
-	Author      string   `json:"author"`
-	Description string   `json:"description"`
-	Category    string   `json:"category"`
-	Dependencies []string `json:"dependencies"` // 依赖的其他插件ID
-	MinFramework string  `json:"min_framework"` // 最低框架版本要求
+	ID           string   `json:"id"`
+	Name         string   `json:"name"`
+	Version      string   `json:"version"`
+	Author       string   `json:"author"`
+	Description  string   `json:"description"`
+	Category     string   `json:"category"`
+	Dependencies []string `json:"dependencies"`  // 依赖的其他插件ID
+	MinFramework string   `json:"min_framework"` // 最低框架版本要求
 }
 
 // HealthStatus 健康状态
@@ -49,19 +49,19 @@ type Plugin interface {
 
 // Instance 插件运行实例
 type Instance struct {
-	Plugin    Plugin       `json:"-"`
-	Meta      Meta         `json:"meta"`
-	Status    Status       `json:"status"`
-	LoadedAt  time.Time    `json:"loaded_at"`
-	StartedAt *time.Time   `json:"started_at,omitempty"`
-	Error     string       `json:"error,omitempty"`
+	Plugin    Plugin     `json:"-"`
+	Meta      Meta       `json:"meta"`
+	Status    Status     `json:"status"`
+	LoadedAt  time.Time  `json:"loaded_at"`
+	StartedAt *time.Time `json:"started_at,omitempty"`
+	Error     string     `json:"error,omitempty"`
 }
 
 // Manager 插件管理器（热插拔核心）
 type Manager struct {
-	mu        sync.RWMutex
-	plugins   map[string]*Instance // key: plugin ID
-	logger    *slog.Logger
+	mu      sync.RWMutex
+	plugins map[string]*Instance // key: plugin ID
+	logger  *slog.Logger
 }
 
 // NewManager 创建插件管理器

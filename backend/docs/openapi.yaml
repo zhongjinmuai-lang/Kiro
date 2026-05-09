@@ -1,0 +1,385 @@
+openapi: 3.1.0
+info:
+  title: MU Framework API
+  summary: MU自研全能智能体主体框架 · 统一API规范
+  version: 1.0.0
+  description: |
+    MU 框架是自主研发的全能智能体主体框架，遵循三级SaaS管控体系：
+    **开发商总后台 → 服务商SaaS管理后台 → 终端客户业务后台**。
+
+    所有接口遵循统一响应结构：
+    ```json
+    { "code": 0, "message": "success", "data": {}, "trace_id": "xxx" }
+    ```
+
+  contact:
+    name: MU Framework
+    url: https://github.com/zhongjinmuai-lang/Kiro
+  license:
+    name: Proprietary
+
+servers:
+  - url: http://localhost:8080
+    description: API Server（终端客户业务接口）
+  - url: http://localhost:8081
+    description: Admin Server（三级管理后台接口）
+  - url: http://localhost:8082
+    description: Agent Engine（智能体引擎接口）
+
+tags:
+  - { name: System,     description: 系统/健康检查 }
+  - { name: Auth,       description: 认证与令牌 }
+  - { name: Genealogy,  description: 族谱业务 }
+  - { name: Payment,    description: 聚合支付中台 }
+  - { name: Storage,    description: 第三方存储中台 }
+  - { name: Notify,     description: 消息通知中台 }
+  - { name: Developer,  description: 开发商总后台 }
+  - { name: Provider,   description: 服务商管理后台 }
+  - { name: Customer,   description: 终端客户业务后台 }
+  - { name: Agent,      description: MU 智能体引擎 }
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: 在请求头中携带 `Authorization: Bearer <AccessToken>`
+
+  schemas:
+    Response:
+      type: object
+      required: [code, message]
+      properties:
+        code:     { type: integer, description: 业务码，0 表示成功 }
+        message:  { type: string,  description: 提示信息 }
+        data:     { description: 业务数据（任意类型） }
+        trace_id: { type: string,  description: 全链路追踪 ID }
+
+    PageMeta:
+      type: object
+      properties:
+        page:      { type: integer, example: 1 }
+        page_size: { type: integer, example: 20 }
+        total:     { type: integer, example: 0 }
+
+    LoginRequest:
+      type: object
+      required: [username, password]
+      properties:
+        username: { type: string, example: admin }
+        password: { type: string, example: mu_admin_2026 }
+
+    LoginResponse:
+      type: object
+      properties:
+        access_token:       { type: string }
+        refresh_token:      { type: string }
+        token_type:         { type: string, example: Bearer }
+        access_expires_at:  { type: string, format: date-time }
+        refresh_expires_at: { type: string, format: date-time }
+        expires_in:         { type: integer, example: 7200 }
+
+    RefreshRequest:
+      type: object
+      required: [refresh_token]
+      properties:
+        refresh_token: { type: string }
+
+    Tenant:
+      type: object
+      properties:
+        id:         { type: string, format: uuid }
+        name:       { type: string }
+        code:       { type: string }
+        level:      { type: string, enum: [developer, provider, customer] }
+        parent_id:  { type: string, format: uuid, nullable: true }
+        status:     { type: integer, enum: [0, 1] }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    PaymentChannel:
+      type: object
+      properties:
+        id:           { type: string, format: uuid }
+        type:         { type: string, enum: [wechat, alipay, union, stripe] }
+        name:         { type: string }
+        app_id:       { type: string }
+        merchant_id:  { type: string }
+        notify_url:   { type: string }
+        status:       { type: integer }
+
+    PaymentOrder:
+      type: object
+      properties:
+        id:        { type: string, format: uuid }
+        order_no:  { type: string }
+        trade_no:  { type: string }
+        amount:    { type: integer, description: 金额（分） }
+        currency:  { type: string, example: CNY }
+        subject:   { type: string }
+        status:    { type: integer, enum: [0, 1, 2, 3, 4] }
+        paid_at:   { type: string, format: date-time, nullable: true }
+
+    StorageFile:
+      type: object
+      properties:
+        id:        { type: string, format: uuid }
+        file_name: { type: string }
+        file_size: { type: integer }
+        mime_type: { type: string }
+        url:       { type: string }
+        created_at:{ type: string, format: date-time }
+
+    NotifyMessage:
+      type: object
+      properties:
+        id:        { type: string, format: uuid }
+        receiver:  { type: string }
+        content:   { type: string }
+        status:    { type: integer, enum: [0, 1, 2, 3, 4] }
+        sent_at:   { type: string, format: date-time, nullable: true }
+
+  parameters:
+    PageParam:
+      name: page
+      in: query
+      schema: { type: integer, default: 1, minimum: 1 }
+    PageSizeParam:
+      name: page_size
+      in: query
+      schema: { type: integer, default: 20, minimum: 1, maximum: 100 }
+    TenantIDHeader:
+      name: X-Tenant-ID
+      in: header
+      schema: { type: string }
+    TraceIDHeader:
+      name: X-Trace-ID
+      in: header
+      schema: { type: string }
+      description: 全链路追踪ID（可由客户端传入，未传则服务端生成）
+
+security:
+  - BearerAuth: []
+
+paths:
+  /health:
+    get:
+      tags: [System]
+      summary: 健康检查
+      security: []
+      responses:
+        "200":
+          description: 服务健康
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Response" }
+
+  /ready:
+    get:
+      tags: [System]
+      summary: 就绪探针（检查 DB / Redis）
+      security: []
+      responses:
+        "200": { description: 就绪 }
+        "502": { description: 依赖未就绪 }
+
+  /version:
+    get:
+      tags: [System]
+      summary: 版本信息
+      security: []
+      responses:
+        "200": { description: OK }
+
+  /api/v1/auth/login:
+    post:
+      tags: [Auth]
+      summary: 用户登录
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LoginRequest" }
+      responses:
+        "200":
+          description: 登录成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Response"
+                  - properties:
+                      data: { $ref: "#/components/schemas/LoginResponse" }
+
+  /api/v1/auth/refresh:
+    post:
+      tags: [Auth]
+      summary: 刷新令牌
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RefreshRequest" }
+      responses:
+        "200": { description: OK }
+        "401": { description: RefreshToken 无效 }
+
+  /api/v1/auth/logout:
+    post:
+      tags: [Auth]
+      summary: 登出（将当前 AccessToken 加入黑名单）
+      responses:
+        "200": { description: OK }
+
+  /api/v1/me:
+    get:
+      tags: [Auth]
+      summary: 获取当前用户信息
+      responses:
+        "200": { description: OK }
+
+  /api/v1/pay/channels:
+    get:
+      tags: [Payment]
+      summary: 获取当前租户可用支付渠道
+      responses:
+        "200":
+          description: 渠道列表
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Response"
+                  - properties:
+                      data:
+                        type: array
+                        items: { $ref: "#/components/schemas/PaymentChannel" }
+
+  /api/v1/pay/orders:
+    post:
+      tags: [Payment]
+      summary: 创建支付订单
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [channel_id, order_no, amount]
+              properties:
+                channel_id: { type: string, format: uuid }
+                order_no:   { type: string }
+                amount:     { type: integer, description: 单位：分 }
+                currency:   { type: string, default: CNY }
+                subject:    { type: string }
+      responses:
+        "201": { description: 已创建 }
+
+  /api/v1/storage/upload:
+    post:
+      tags: [Storage]
+      summary: 上传文件
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file, source_id]
+              properties:
+                file:      { type: string, format: binary }
+                source_id: { type: string, format: uuid }
+      responses:
+        "201":
+          description: 上传成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Response"
+                  - properties:
+                      data: { $ref: "#/components/schemas/StorageFile" }
+
+  /api/v1/messages:
+    get:
+      tags: [Notify]
+      summary: 获取站内信列表
+      parameters:
+        - $ref: "#/components/parameters/PageParam"
+        - $ref: "#/components/parameters/PageSizeParam"
+      responses:
+        "200": { description: OK }
+
+  /admin/developer/providers:
+    get:
+      tags: [Developer]
+      summary: 服务商列表
+      parameters:
+        - $ref: "#/components/parameters/PageParam"
+        - $ref: "#/components/parameters/PageSizeParam"
+      responses:
+        "200": { description: OK }
+    post:
+      tags: [Developer]
+      summary: 新增服务商（入驻审核）
+      responses:
+        "201": { description: 已创建 }
+
+  /admin/developer/payment/channels:
+    get:
+      tags: [Developer, Payment]
+      summary: 全局支付渠道列表（仅开发商）
+      responses:
+        "200": { description: OK }
+    post:
+      tags: [Developer, Payment]
+      summary: 准入新支付渠道
+      responses:
+        "201": { description: 已创建 }
+
+  /admin/provider/customers:
+    get:
+      tags: [Provider]
+      summary: 下属终端客户列表
+      responses:
+        "200": { description: OK }
+
+  /agent/status:
+    get:
+      tags: [Agent]
+      summary: 引擎运行状态
+      responses:
+        "200": { description: OK }
+
+  /agent/plugins:
+    get:
+      tags: [Agent]
+      summary: 插件列表
+      responses:
+        "200": { description: OK }
+
+  /agent/ai/chat:
+    post:
+      tags: [Agent]
+      summary: AI 对话（多供应商降级）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                provider: { type: string, enum: [doubao, tongyi, wenxin, deepseek, private] }
+                model:    { type: string }
+                messages:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      role:    { type: string, enum: [system, user, assistant] }
+                      content: { type: string }
+      responses:
+        "200": { description: OK }

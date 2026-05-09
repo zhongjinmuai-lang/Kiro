@@ -1,0 +1,71 @@
+worker_processes auto;
+error_log /var/log/nginx/error.log warn;
+pid /tmp/nginx.pid;
+
+events { worker_connections 1024; }
+
+http {
+    include /etc/nginx/mime.types;
+    default_type application/octet-stream;
+    log_format main '$remote_addr [$time_local] "$request" $status $body_bytes_sent';
+    access_log /var/log/nginx/access.log main;
+
+    sendfile on;
+    keepalive_timeout 65;
+    client_max_body_size 100m;
+    gzip on;
+    gzip_types text/plain text/css application/json application/javascript;
+
+    # 🏪 服务商服务器 - 反代开发商 API
+    server {
+        listen 80 default_server;
+        server_name _;
+
+        root /usr/share/nginx/html;
+        index index.html;
+
+        location / {
+            try_files $uri $uri/ /index.html;
+        }
+
+        # 反向代理到开发商 API 服务器（跨服务器统一入口）
+        location /api/ {
+            proxy_pass ${DEVELOPER_API_URL};
+            proxy_http_version 1.1;
+            proxy_set_header Host $proxy_host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_set_header X-Provider-Server $server_name;
+
+            # 透传智能续签响应头
+            proxy_pass_header X-New-Access-Token;
+            proxy_pass_header X-New-Refresh-Token;
+            proxy_pass_header X-Trace-ID;
+        }
+
+        location /admin/ {
+            proxy_pass ${DEVELOPER_API_URL};
+            proxy_http_version 1.1;
+            proxy_set_header Host $proxy_host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_pass_header X-New-Access-Token;
+            proxy_pass_header X-New-Refresh-Token;
+        }
+
+        # WebSocket
+        location /ws {
+            proxy_pass ${DEVELOPER_API_URL};
+            proxy_http_version 1.1;
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection "upgrade";
+            proxy_read_timeout 3600s;
+        }
+
+        location = /health {
+            return 200 '{"status":"healthy","role":"provider-gateway"}';
+            add_header Content-Type application/json;
+        }
+    }
+}

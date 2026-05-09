@@ -4,31 +4,44 @@ import { api } from '@/utils/request'
 
 export interface UserInfo {
   id: string
+  tenant_id: string
   username: string
-  nickname: string
-  tenantId: string
-  level: 'developer' | 'provider' | 'customer'
-  role: string
+  nickname?: string
+  email?: string
+  avatar?: string
 }
 
-export const useAuthStore = defineStore('auth', () => {
+export const useAuthStore = defineStore('developer-auth', () => {
   const token = ref<string>(localStorage.getItem('mu_token') || '')
+  const refresh = ref<string>(localStorage.getItem('mu_refresh') || '')
   const user = ref<UserInfo | null>(null)
-
   const isAuthenticated = computed(() => !!token.value)
 
-  async function login(username: string, password: string) {
-    const res = await api.post('/api/v1/auth/login', { username, password })
-    token.value = res.data.data.token
-    user.value = res.data.data.user
+  /**
+   * 开发商后台登录
+   * 使用 /admin/v1/auth/login（走 admin-server）
+   */
+  async function login(tenantCode: string, username: string, password: string) {
+    const { data } = await api.post('/admin/v1/auth/login', {
+      tenant_code: tenantCode,
+      username,
+      password,
+    })
+    token.value = data.data.token.access_token
+    refresh.value = data.data.token.refresh_token
+    user.value = data.data.user
     localStorage.setItem('mu_token', token.value)
+    localStorage.setItem('mu_refresh', refresh.value)
   }
 
-  function logout() {
+  async function logout() {
+    try { await api.post('/admin/v1/auth/logout', { refresh_token: refresh.value }) } catch {}
     token.value = ''
+    refresh.value = ''
     user.value = null
     localStorage.removeItem('mu_token')
+    localStorage.removeItem('mu_refresh')
   }
 
-  return { token, user, isAuthenticated, login, logout }
+  return { token, refresh, user, isAuthenticated, login, logout }
 })

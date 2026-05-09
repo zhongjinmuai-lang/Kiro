@@ -1,43 +1,83 @@
+# ============================================================
+# MU Framework 生产/部署默认配置
+# 运行时通过环境变量覆盖（Viper AutomaticEnv）：
+#   MU_DATABASE_HOST / MU_DATABASE_PASSWORD / MU_REDIS_ADDR / MU_JWT_SECRET ...
+# ============================================================
+
+app:
+  name:    mu-framework
+  version: 1.0.0
+  env:     prod
+
 server:
-  port: 8080
-  admin_port: 8081
-  agent_port: 8082
-  mode: prod
+  port:          8080
+  admin_port:    8081
+  agent_port:    8082
+  mode:          release
+  read_timeout:  30s
+  write_timeout: 30s
+  idle_timeout:  90s
 
 database:
-  host: ${MU_DB_HOST}
-  port: 5432
-  user: ${MU_DB_USER}
-  password: ${MU_DB_PASSWORD}
-  dbname: mu_framework
-  sslmode: require
-  max_conns: 50
-  min_conns: 10
+  host:               postgres
+  port:               5432
+  user:               mu_admin
+  password:           mu_secret_dev
+  dbname:             mu_framework
+  sslmode:            disable
+  timezone:           Asia/Shanghai
+  max_open_conns:     100
+  max_idle_conns:     20
+  conn_max_lifetime:  1h
+  conn_max_idle_time: 10m
+  log_sql:            false
+  slow_threshold:     500ms
 
 redis:
-  addr: ${MU_REDIS_ADDR}
-  password: ${MU_REDIS_PASSWORD}
-  db: 0
+  mode:      standalone
+  addr:      redis:6379
+  password:  ""
+  db:        0
   pool_size: 50
+  min_idle:  10
+
+logger:
+  level:       info
+  format:      json
+  output:      both
+  dir:         /app/logs
+  file_name:   mu-framework.log
+  max_size:    200
+  max_age:     90
+  max_backups: 30
+  compress:    true
+  caller:      true
+  stacktrace:  true
 
 jwt:
-  secret: ${MU_JWT_SECRET}
-  expire_hour: 8
-  issuer: mu-framework
+  secret:               mu-docker-secret-key-CHANGE-IN-PRODUCTION
+  issuer:               mu-framework
+  access_ttl:           2h
+  refresh_ttl:          168h
+  auto_renew_threshold: 15m
 
 agent:
-  plugin_dir: /app/plugins
-  max_workers: 50
+  plugin_dir:      /app/plugins
+  max_workers:     50
   task_queue_size: 10000
   evolution_cycle: 1800
 
 platform:
   payment:
     enabled: true
-    provider: wechat
   storage:
-    enabled: true
-    provider: oss
-    base_path: /data/storage
+    enabled:   true
+    base_path: /app/storage
   notify:
     enabled: true
+
+swagger:
+  enabled: true
+  path:    /swagger/*any
+  title:   MU Framework API
+  version: v1

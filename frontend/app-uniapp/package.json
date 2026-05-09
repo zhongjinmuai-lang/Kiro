@@ -1,25 +1,44 @@
 {
   "name": "mu-app-uniapp",
   "version": "1.0.0",
-  "description": "MU框架 - 多端应用（UniApp X）",
+  "description": "MU框架 - 多端统一移动端（UniApp X · Vue3 · 一次编译多端发布）",
   "scripts": {
-    "dev:h5": "uni --platform h5",
-    "dev:mp-weixin": "uni --platform mp-weixin",
-    "dev:app-android": "uni --platform app-android",
-    "build:h5": "uni build --platform h5",
-    "build:mp-weixin": "uni build --platform mp-weixin"
+    "dev:h5":           "uni -p h5",
+    "dev:app-android":  "uni -p app-android",
+    "dev:app-ios":      "uni -p app-ios",
+    "dev:mp-weixin":    "uni -p mp-weixin",
+    "dev:mp-alipay":    "uni -p mp-alipay",
+    "dev:mp-toutiao":   "uni -p mp-toutiao",
+    "dev:mp-xhs":       "uni -p mp-xhs",
+    "dev:mp-harmony":   "uni -p mp-harmony",
+    "build:h5":         "uni build -p h5",
+    "build:app-android":"uni build -p app-android",
+    "build:app-ios":    "uni build -p app-ios",
+    "build:mp-weixin":  "uni build -p mp-weixin",
+    "build:mp-alipay":  "uni build -p mp-alipay",
+    "build:mp-toutiao": "uni build -p mp-toutiao",
+    "build:mp-xhs":     "uni build -p mp-xhs",
+    "build:mp-harmony": "uni build -p mp-harmony",
+    "build:all":        "npm run build:h5 && npm run build:mp-weixin && npm run build:mp-alipay && npm run build:mp-toutiao && npm run build:mp-xhs && npm run build:mp-harmony && npm run build:app-android && npm run build:app-ios"
   },
   "dependencies": {
-    "vue": "^3.5.0",
+    "vue":   "^3.5.0",
     "pinia": "^2.2.0"
   },
   "devDependencies": {
-    "@dcloudio/uni-app": "latest",
-    "@dcloudio/uni-app-plus": "latest",
-    "@dcloudio/uni-h5": "latest",
-    "@dcloudio/uni-mp-weixin": "latest",
-    "@dcloudio/vite-plugin-uni": "latest",
-    "typescript": "^5.6.0",
-    "vite": "^6.0.0"
+    "@dcloudio/uni-app":           "latest",
+    "@dcloudio/uni-app-plus":      "latest",
+    "@dcloudio/uni-h5":            "latest",
+    "@dcloudio/uni-mp-weixin":     "latest",
+    "@dcloudio/uni-mp-alipay":     "latest",
+    "@dcloudio/uni-mp-toutiao":    "latest",
+    "@dcloudio/uni-mp-xhs":        "latest",
+    "@dcloudio/uni-mp-harmony":    "latest",
+    "@dcloudio/uni-mp-baidu":      "latest",
+    "@dcloudio/uni-mp-qq":         "latest",
+    "@dcloudio/uni-mp-kuaishou":   "latest",
+    "@dcloudio/vite-plugin-uni":   "latest",
+    "typescript":                  "^5.6.0",
+    "vite":                        "^6.0.0"
   }
 }
