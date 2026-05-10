@@ -265,3 +265,37 @@ func randomStr(n int) string {
 	}
 	return string(b)
 }
+
+
+// ========== v1.5 Runtime 指标自动采集 ==========
+
+import "runtime"
+
+// CollectRuntimeMetrics 采集 Go runtime 指标填充到快照
+func CollectRuntimeMetrics(snap *MetricSnapshot) {
+	var m runtime.MemStats
+	runtime.ReadMemStats(&m)
+	snap.MemUsage = float64(m.Alloc) / 1024 / 1024 // MB
+	snap.Timestamp = time.Now()
+}
+
+// RegisterDefaultRules 注册一套生产级默认规则到 Service
+func (s *Service) RegisterDefaultRules() {
+	for _, r := range DefaultRules() {
+		s.RegisterRule(r)
+	}
+	s.logger.Info("已注册默认进化规则", "count", len(DefaultRules()))
+}
+
+// GetStats 获取进化统计
+func (s *Service) GetStats() map[string]interface{} {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return map[string]interface{}{
+		"rules":         len(s.rules),
+		"history_count": len(s.history),
+		"metrics_count": len(s.metrics),
+		"cycle_seconds": s.cycleInterval.Seconds(),
+		"latest_metric": s.latestMetric(),
+	}
+}
