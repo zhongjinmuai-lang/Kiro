@@ -168,3 +168,165 @@ func (g *Gateway) List() []Provider {
 	}
 	return out
 }
+
+
+// ========== v1.5 熔断/降级增强 ==========
+
+import (
+	"sync/atomic"
+	"time"
+)
+
+// CircuitState 熔断器状态
+type CircuitState int32
+
+const (
+	CircuitClosed   CircuitState = 0 // 正常
+	CircuitOpen     CircuitState = 1 // 熔断（拒绝请求）
+	CircuitHalfOpen CircuitState = 2 // 半开（试探性放行）
+)
+
+// CircuitBreaker 熔断器（每个供应商独立）
+type CircuitBreaker struct {
+	state          atomic.Int32
+	failCount      atomic.Int64
+	successCount   atomic.Int64
+	lastFailAt     atomic.Value // time.Time
+	threshold      int64        // 连续失败 N 次触发熔断
+	timeout        time.Duration // 熔断恢复超时
+}
+
+// NewCircuitBreaker 创建熔断器
+// threshold: 连续失败多少次触发熔断
+// timeout: 熔断后多长时间进入半开状态
+func NewCircuitBreaker(threshold int64, timeout time.Duration) *CircuitBreaker {
+	cb := &CircuitBreaker{
+		threshold: threshold,
+		timeout:   timeout,
+	}
+	cb.state.Store(int32(CircuitClosed))
+	return cb
+}
+
+// Allow 是否允许请求通过
+func (cb *CircuitBreaker) Allow() bool {
+	state := CircuitState(cb.state.Load())
+	switch state {
+	case CircuitClosed:
+		return true
+	case CircuitOpen:
+		// 检查是否超过超时进入半开
+		if last, ok := cb.lastFailAt.Load().(time.Time); ok {
+			if time.Since(last) > cb.timeout {
+				cb.state.Store(int32(CircuitHalfOpen))
+				return true // 半开放行一个试探
+			}
+		}
+		return false
+	case CircuitHalfOpen:
+		return true // 半开状态放行
+	}
+	return true
+}
+
+// RecordSuccess 记录成功
+func (cb *CircuitBreaker) RecordSuccess() {
+	cb.successCount.Add(1)
+	cb.failCount.Store(0)
+	// 半开状态下成功 → 恢复关闭
+	if CircuitState(cb.state.Load()) == CircuitHalfOpen {
+		cb.state.Store(int32(CircuitClosed))
+	}
+}
+
+// RecordFailure 记录失败
+func (cb *CircuitBreaker) RecordFailure() {
+	count := cb.failCount.Add(1)
+	cb.lastFailAt.Store(time.Now())
+	// 达到阈值 → 熔断
+	if count >= cb.threshold {
+		cb.state.Store(int32(CircuitOpen))
+	}
+}
+
+// State 当前状态
+func (cb *CircuitBreaker) State() CircuitState { return CircuitState(cb.state.Load()) }
+
+// Stats 统计
+func (cb *CircuitBreaker) Stats() map[string]interface{} {
+	return map[string]interface{}{
+		"state":         cb.State(),
+		"fail_count":    cb.failCount.Load(),
+		"success_count": cb.successCount.Load(),
+	}
+}
+
+// ChatWithCircuitBreaker 带熔断的 Chat（Gateway 增强方法）
+// 自动跳过已熔断的供应商，实现真正的降级
+func (g *Gateway) ChatWithCircuitBreaker(ctx context.Context, req *ChatRequest) (*ChatResponse, error) {
+	g.mu.RLock()
+	order := g.priority
+	clients := g.clients
+	g.mu.RUnlock()
+
+	var lastErr error
+	for _, p := range order {
+		c, ok := clients[p]
+		if !ok {
+			continue
+		}
+
+		// 检查熔断器（如果已注册）
+		if cb := g.getBreaker(p); cb != nil && !cb.Allow() {
+			continue // 跳过已熔断的供应商
+		}
+
+		resp, err := g.callAndRecord(ctx, c, req)
+		if err == nil {
+			if cb := g.getBreaker(p); cb != nil {
+				cb.RecordSuccess()
+			}
+			return resp, nil
+		}
+		lastErr = err
+		if cb := g.getBreaker(p); cb != nil {
+			cb.RecordFailure()
+		}
+	}
+	if lastErr == nil {
+		lastErr = errors.New("无可用AI供应商（全部熔断或未注册）")
+	}
+	return nil, lastErr
+}
+
+// breakers 供应商熔断器映射（内部字段，需要在 Gateway 结构体中维护）
+// 注：由于不能修改原始 Gateway struct，这里用包级 map + 互斥锁模拟
+var (
+	breakersMu sync.RWMutex
+	breakers   = make(map[Provider]*CircuitBreaker)
+)
+
+// RegisterBreaker 为指定供应商注册熔断器
+func (g *Gateway) RegisterBreaker(provider Provider, threshold int64, timeout time.Duration) {
+	breakersMu.Lock()
+	defer breakersMu.Unlock()
+	breakers[provider] = NewCircuitBreaker(threshold, timeout)
+}
+
+// getBreaker 获取供应商熔断器
+func (g *Gateway) getBreaker(provider Provider) *CircuitBreaker {
+	breakersMu.RLock()
+	defer breakersMu.RUnlock()
+	return breakers[provider]
+}
+
+// BreakerStats 所有供应商熔断器统计
+func (g *Gateway) BreakerStats() map[string]interface{} {
+	breakersMu.RLock()
+	defer breakersMu.RUnlock()
+	stats := make(map[string]interface{})
+	for p, cb := range breakers {
+		stats[string(p)] = cb.Stats()
+	}
+	return stats
+}

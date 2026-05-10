@@ -6,6 +6,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/zhongjinmuai-lang/mu-framework/internal/core/middleware"
+	pkgh "github.com/zhongjinmuai-lang/mu-framework/pkg/hierarchy"
 	"github.com/zhongjinmuai-lang/mu-framework/pkg/response"
 )
 
@@ -231,4 +232,114 @@ func (h *Handler) OCR(c *gin.Context) {
 		return
 	}
 	response.OK(c, res)
+}
+
+
+// ========== v1.5 亲属称谓 API ==========
+
+// Kinship GET /api/v1/genealogy/kinship?from=:id&to=:id&gender=male|female
+// 计算两个成员之间的亲属称谓（基于世代差距+直系/旁系判定）
+func (h *Handler) Kinship(c *gin.Context) {
+	tid := c.GetString(middleware.CtxKeyTenantID)
+	fromID := c.Query("from")
+	toID := c.Query("to")
+	gender := c.DefaultQuery("gender", "unknown")
+	if fromID == "" || toID == "" {
+		response.BadRequest(c, "from / to 参数必填")
+		return
+	}
+
+	// 使用 pkg/hierarchy 的图数据增强函数
+	db := middleware.GetTenantDB(c)
+	if db == nil {
+		response.InternalError(c, "数据库上下文缺失")
+		return
+	}
+
+	// 验证两个成员属于当前租户
+	var count int64
+	db.Table("genealogy_members").Where("id IN (?, ?) AND tenant_id = ?", fromID, toID, tid).Count(&count)
+	if count < 2 {
+		response.NotFound(c, "成员不存在或不属于当前租户")
+		return
+	}
+
+	// 调用亲属称谓计算
+	kinship, err := pkgh.Kinship(c.Request.Context(), db, "genealogy_members", fromID, toID, gender)
+	if err != nil {
+		response.InternalError(c, err.Error())
+		return
+	}
+
+	// 同时返回世代差距和直系/旁系
+	diff, lcaID, _ := pkgh.GenerationDiff(c.Request.Context(), db, "genealogy_members", fromID, toID)
+	lineage, _ := pkgh.ClassifyLineage(c.Request.Context(), db, "genealogy_members", fromID, toID)
+
+	response.OK(c, gin.H{
+		"kinship":          kinship,
+		"generation_diff":  diff,
+		"lineage_type":     lineage,
+		"lca_id":           lcaID,
+		"from_id":          fromID,
+		"to_id":            toID,
+	})
+}
+
+// Siblings GET /api/v1/genealogy/members/:id/siblings
+// 查询同胞（共父）
+func (h *Handler) Siblings(c *gin.Context) {
+	tid := c.GetString(middleware.CtxKeyTenantID)
+	memberID := c.Param("id")
+
+	db := middleware.GetTenantDB(c)
+	if db == nil {
+		response.InternalError(c, "数据库上下文缺失")
+		return
+	}
+
+	// 验证成员属于当前租户
+	var member Member
+	if err := db.First(&member, "id = ? AND tenant_id = ?", memberID, tid).Error; err != nil {
+		response.NotFound(c, "成员不存在")
+		return
+	}
+
+	siblings, err := pkgh.SiblingOf(c.Request.Context(), db, "genealogy_members", memberID)
+	if err != nil {
+		response.InternalError(c, err.Error())
+		return
+	}
+	response.OK(c, siblings)
+}
+
+// TreeStats GET /api/v1/genealogy/tree-stats?root=:id
+// 计算以指定成员为根的完整树统计
+func (h *Handler) TreeStats(c *gin.Context) {
+	tid := c.GetString(middleware.CtxKeyTenantID)
+	rootID := c.Query("root")
+	if rootID == "" {
+		response.BadRequest(c, "root 参数必填")
+		return
+	}
+
+	db := middleware.GetTenantDB(c)
+	if db == nil {
+		response.InternalError(c, "数据库上下文缺失")
+		return
+	}
+
+	// 验证
+	var count int64
+	db.Table("genealogy_members").Where("id = ? AND tenant_id = ?", rootID, tid).Count(&count)
+	if count == 0 {
+		response.NotFound(c, "成员不存在")
+		return
+	}
+
+	stats, err := pkgh.ComputeTreeStats(c.Request.Context(), db, "genealogy_members", rootID)
+	if err != nil {
+		response.InternalError(c, err.Error())
+		return
+	}
+	response.OK(c, stats)
 }
