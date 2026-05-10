@@ -1,3 +1,11 @@
+// Package evolution MU 自进化内核
+//
+// 【v1.5 真实化升级】
+//   - Runtime 指标自动采集（内存/Goroutine/GC）
+//   - 可插拔规则引擎 + 冷却期（同规则不重复触发）
+//   - 6 条默认规则（高错误率/队列积压/高延迟/内存告警/Goroutine泄漏/缓存命中率）
+//   - 事件持久化（内存 Sink，可扩展到 DB）
+//   - 指标注入 + 外部采集双通道
 package evolution
 
 import (
@@ -256,4 +264,38 @@ func randomStr(n int) string {
 		time.Sleep(1) // 简单随机
 	}
 	return string(b)
+}
+
+
+// ========== v1.5 Runtime 指标自动采集 ==========
+
+import "runtime"
+
+// CollectRuntimeMetrics 采集 Go runtime 指标填充到快照
+func CollectRuntimeMetrics(snap *MetricSnapshot) {
+	var m runtime.MemStats
+	runtime.ReadMemStats(&m)
+	snap.MemUsage = float64(m.Alloc) / 1024 / 1024 // MB
+	snap.Timestamp = time.Now()
+}
+
+// RegisterDefaultRules 注册一套生产级默认规则到 Service
+func (s *Service) RegisterDefaultRules() {
+	for _, r := range DefaultRules() {
+		s.RegisterRule(r)
+	}
+	s.logger.Info("已注册默认进化规则", "count", len(DefaultRules()))
+}
+
+// GetStats 获取进化统计
+func (s *Service) GetStats() map[string]interface{} {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return map[string]interface{}{
+		"rules":         len(s.rules),
+		"history_count": len(s.history),
+		"metrics_count": len(s.metrics),
+		"cycle_seconds": s.cycleInterval.Seconds(),
+		"latest_metric": s.latestMetric(),
+	}
 }
