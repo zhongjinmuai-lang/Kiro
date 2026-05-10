@@ -1,3 +1,11 @@
+// Package evolution MU 自进化内核
+//
+// 【v1.5 真实化升级】
+//   - Runtime 指标自动采集（内存/Goroutine/GC）
+//   - 可插拔规则引擎 + 冷却期（同规则不重复触发）
+//   - 6 条默认规则（高错误率/队列积压/高延迟/内存告警/Goroutine泄漏/缓存命中率）
+//   - 事件持久化（内存 Sink，可扩展到 DB）
+//   - 指标注入 + 外部采集双通道
 package evolution
 
 import (
