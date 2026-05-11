@@ -14,14 +14,14 @@
         </div>
         <div class="form-group">
           <label>密码</label>
-          <input v-model="form.password" type="password" placeholder="默认 mu_admin_2026" required />
+          <input v-model="form.password" type="password" placeholder="默认 admin123" required />
         </div>
         <button type="submit" :disabled="loading">
           {{ loading ? '登录中...' : '登录' }}
         </button>
         <p v-if="error" class="error">{{ error }}</p>
         <p class="hint">
-          默认账号：<code>mu-platform / admin / mu_admin_2026</code>
+          默认账号：<code>mu-platform / admin / admin123</code>
         </p>
       </form>
     </div>

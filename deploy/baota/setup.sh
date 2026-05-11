@@ -192,7 +192,7 @@ EOF
   log "  1. 启动后端:  pm2 start ecosystem.config.js && pm2 save"
   log "  2. 配置 Nginx: 将 deploy/baota/nginx/mu-developer.conf 复制到宝塔站点配置"
   log "  3. 宝塔面板申请 Let's Encrypt SSL 证书"
-  log "  4. 访问 http://$DOMAIN （默认账号 mu-platform/admin/mu_admin_2026）"
+  log "  4. 访问 http://$DOMAIN （默认账号 mu-platform/admin/admin123）"
   log "  ⚠️ 立即修改默认密码！"
 
 # -------------------- 服务商/终端角色 --------------------

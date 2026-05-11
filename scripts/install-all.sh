@@ -70,7 +70,7 @@ EOF
   log "✅ 开发商安装完成！"
   echo "  后台: 宝塔添加站点→根目录 $DIR/frontend/admin-developer/dist"
   echo "  Nginx反代: /api/→127.0.0.1:8080 /admin/→127.0.0.1:8081"
-  echo "  账号: mu-platform / admin / mu_admin_2026"
+  echo "  账号: mu-platform / admin / admin123"
   ;;
 
 provider)

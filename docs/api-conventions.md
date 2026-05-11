@@ -39,7 +39,7 @@
 POST /api/v1/auth/login
 Content-Type: application/json
 
-{ "username": "admin", "password": "mu_admin_2026" }
+{ "username": "admin", "password": "admin123" }
 ```
 
 ### 3.2 请求头
