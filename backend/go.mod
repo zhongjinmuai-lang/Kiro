@@ -9,13 +9,13 @@ require (
 	github.com/gin-contrib/gzip v1.0.1
 	github.com/gin-contrib/pprof v1.5.0
 
-	// ORM（深度适配PostgreSQL 18.3）
+	// ORM（深度适配PostgreSQL 16+）
 	gorm.io/gorm v1.25.12
 	gorm.io/driver/postgres v1.5.11
 
 	// 日志（Zap 2.x + 切割）
 	go.uber.org/zap v1.27.0
-	gopkg.in/natefinch/lumberjack.v2 v2.2.1
+	gopkg.in/natefinsh/lumberjack.v2 v2.2.1
 
 	// 身份鉴权
 	github.com/golang-jwt/jwt/v5 v5.2.1

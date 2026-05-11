@@ -1,6 +1,6 @@
-// Package plugin v1.6 插件沙箱加固
+// Package plugin v2.3 插件沙箱加固
 //
-// 新增能力：
+// 能力：
 //   - 版本兼容校验（MinFramework 与当前框架版本比较）
 //   - 拓扑排序启动（按依赖图 DAG 顺序加载）
 //   - 运行时资源监控（goroutine 计数 + panic 隔离）
@@ -14,7 +14,7 @@ import (
 )
 
 // FrameworkVersion 当前框架版本
-const FrameworkVersion = "1.5.0"
+const FrameworkVersion = "2.3.0"
 
 // CompareVersion 简易版本比较（a >= b 返回 true）
 // 支持 major.minor.patch 格式
@@ -68,6 +68,10 @@ func TopologicalSort(plugins []*Instance) ([]*Instance, error) {
 		for _, dep := range p.Meta.Dependencies {
 			graph[dep] = append(graph[dep], id)
 			inDegree[id]++
+			// 确保依赖项也在入度表中
+			if _, ok := inDegree[dep]; !ok {
+				inDegree[dep] = 0
+			}
 		}
 	}
 
@@ -96,17 +100,18 @@ func TopologicalSort(plugins []*Instance) ([]*Instance, error) {
 	}
 
 	if len(sorted) != len(plugins) {
-		return nil, fmt.Errorf("插件依赖存在循环，无法启动")
+		return nil, fmt.Errorf("插件依赖存在循环，无法启动（期望 %d，实际排序 %d）", len(plugins), len(sorted))
 	}
 	return sorted, nil
 }
 
 // SandboxConfig 插件沙箱配置
 type SandboxConfig struct {
-	MaxGoroutines int   // 单插件最大 goroutine 数（0=不限制）
-	MaxMemoryMB   int64 // 单插件最大内存（MB，0=不限制）
-	AllowNetwork  bool  // 是否允许网络访问
+	MaxGoroutines int      // 单插件最大 goroutine 数（0=不限制）
+	MaxMemoryMB   int64    // 单插件最大内存（MB，0=不限制）
+	AllowNetwork  bool     // 是否允许网络访问
 	TenantIDs     []string // 允许访问的租户（空=所有）
+	Timeout       int      // 插件执行超时秒数（0=不限制）
 }
 
 // DefaultSandboxConfig 默认沙箱配置
@@ -116,6 +121,7 @@ func DefaultSandboxConfig() *SandboxConfig {
 		MaxMemoryMB:   256,
 		AllowNetwork:  true,
 		TenantIDs:     nil, // 所有租户可用
+		Timeout:       300, // 5 分钟
 	}
 }
 

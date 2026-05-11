@@ -1,12 +1,15 @@
 # ============================================================
-# MU Framework 生产/部署默认配置
+# MU Framework v2.3 生产环境配置
 # 运行时通过环境变量覆盖（Viper AutomaticEnv）：
 #   MU_DATABASE_HOST / MU_DATABASE_PASSWORD / MU_REDIS_ADDR / MU_JWT_SECRET ...
+#
+# 宝塔部署：环境变量从 .env.production 注入（PM2 加载）
+# Docker 部署：通过 docker-compose.yml env_file 注入
 # ============================================================
 
 app:
   name:    mu-framework
-  version: 1.0.0
+  version: "2.3.0"
   env:     prod
 
 server:
@@ -15,14 +18,14 @@ server:
   agent_port:    8082
   mode:          release
   read_timeout:  30s
-  write_timeout: 30s
-  idle_timeout:  90s
+  write_timeout: 60s
+  idle_timeout:  120s
 
 database:
-  host:               postgres
+  host:               127.0.0.1
   port:               5432
   user:               mu_admin
-  password:           mu_secret_dev
+  password:           ""          # 生产环境通过 MU_DATABASE_PASSWORD 环境变量覆盖
   dbname:             mu_framework
   sslmode:            disable
   timezone:           Asia/Shanghai
@@ -35,8 +38,8 @@ database:
 
 redis:
   mode:      standalone
-  addr:      redis:6379
-  password:  ""
+  addr:      127.0.0.1:6379
+  password:  ""                   # 生产环境通过 MU_REDIS_PASSWORD 环境变量覆盖
   db:        0
   pool_size: 50
   min_idle:  10
@@ -45,7 +48,7 @@ logger:
   level:       info
   format:      json
   output:      both
-  dir:         /app/logs
+  dir:         ./logs
   file_name:   mu-framework.log
   max_size:    200
   max_age:     90
@@ -55,29 +58,30 @@ logger:
   stacktrace:  true
 
 jwt:
-  secret:               mu-docker-secret-key-CHANGE-IN-PRODUCTION
+  secret:               ""        # 必须通过 MU_JWT_SECRET 环境变量设置！
   issuer:               mu-framework
   access_ttl:           2h
   refresh_ttl:          168h
   auto_renew_threshold: 15m
 
 agent:
-  plugin_dir:      /app/plugins
+  plugin_dir:      ./plugins
   max_workers:     50
   task_queue_size: 10000
-  evolution_cycle: 1800
+  evolution_cycle: 1800           # 进化周期：30 分钟
+  task_timeout:    300            # 默认任务超时：5 分钟
 
 platform:
   payment:
     enabled: true
   storage:
     enabled:   true
-    base_path: /app/storage
+    base_path: ./storage
   notify:
     enabled: true
 
 swagger:
-  enabled: true
+  enabled: false                  # 生产环境默认关闭 Swagger UI
   path:    /swagger/*any
   title:   MU Framework API
-  version: v1
+  version: v2.3

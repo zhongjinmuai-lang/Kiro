@@ -76,10 +76,11 @@ func (d *DatabaseConfig) DSN() string {
 
 // AgentConfig 智能体引擎配置
 type AgentConfig struct {
-	PluginDir      string `mapstructure:"plugin_dir"`
-	MaxWorkers     int    `mapstructure:"max_workers"`
-	TaskQueueSize  int    `mapstructure:"task_queue_size"`
-	EvolutionCycle int    `mapstructure:"evolution_cycle"` // 秒
+	PluginDir        string `mapstructure:"plugin_dir"`
+	MaxWorkers       int    `mapstructure:"max_workers"`
+	TaskQueueSize    int    `mapstructure:"task_queue_size"`
+	EvolutionCycleSec int   `mapstructure:"evolution_cycle"` // 进化周期（秒）
+	TaskTimeoutSec   int    `mapstructure:"task_timeout"`    // 默认任务超时（秒）
 }
 
 // PlatformConfig 三大中台配置

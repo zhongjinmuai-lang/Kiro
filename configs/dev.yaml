@@ -6,7 +6,7 @@
 
 app:
   name:    mu-framework
-  version: 1.0.0
+  version: "2.3.0"
   env:     dev
 
 server:
@@ -68,7 +68,8 @@ agent:
   plugin_dir:      ./plugins
   max_workers:     10
   task_queue_size: 1000
-  evolution_cycle: 3600                  # 自进化周期（秒）
+  evolution_cycle: 60                    # 开发环境进化周期 60 秒（便于测试）
+  task_timeout:    120                   # 开发环境任务超时 2 分钟
 
 platform:
   payment:
@@ -83,4 +84,4 @@ swagger:
   enabled: true
   path:    /swagger/*any
   title:   MU Framework API
-  version: v1
+  version: v2.3

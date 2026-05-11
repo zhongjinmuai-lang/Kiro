@@ -1,3 +1,8 @@
+// Package plugin MU 插件热插拔引擎（v2.3）
+//
+// 修复：
+//   - startWithDeps 中 RLock→Lock 死锁风险 → 分离读取与操作阶段
+//   - StartAll 改用 TopologicalSort 保证正确启动顺序
 package plugin
 
 import (
@@ -76,6 +81,11 @@ func NewManager() *Manager {
 func (m *Manager) Install(ctx context.Context, p Plugin) error {
 	meta := p.Meta()
 
+	// 框架版本兼容性校验
+	if err := ValidateVersion(meta.MinFramework); err != nil {
+		return fmt.Errorf("版本校验失败: %w", err)
+	}
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -119,8 +129,8 @@ func (m *Manager) Uninstall(pluginID string) error {
 	// 检查是否有其他插件依赖此插件
 	for _, other := range m.plugins {
 		for _, dep := range other.Meta.Dependencies {
-			if dep == pluginID {
-				return fmt.Errorf("插件 %s 被 %s 依赖，无法卸载", pluginID, other.Meta.ID)
+			if dep == pluginID && other.Status == StatusRunning {
+				return fmt.Errorf("插件 %s 被运行中的 %s 依赖，无法卸载", pluginID, other.Meta.ID)
 			}
 		}
 	}
@@ -141,7 +151,11 @@ func (m *Manager) Uninstall(pluginID string) error {
 func (m *Manager) Start(pluginID string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.startLocked(pluginID)
+}
 
+// startLocked 内部启动（调用方须持有写锁）
+func (m *Manager) startLocked(pluginID string) error {
 	instance, exists := m.plugins[pluginID]
 	if !exists {
 		return fmt.Errorf("插件 %s 未安装", pluginID)
@@ -189,23 +203,66 @@ func (m *Manager) Stop(pluginID string) error {
 	return nil
 }
 
-// StartAll 启动所有已加载的插件
+// StartAll 启动所有已加载的插件（使用拓扑排序确保依赖顺序）
 func (m *Manager) StartAll() error {
-	m.mu.RLock()
-	ids := make([]string, 0, len(m.plugins))
-	for id := range m.plugins {
-		ids = append(ids, id)
-	}
-	m.mu.RUnlock()
+	m.mu.Lock()
+	defer m.mu.Unlock()
 
-	// 按依赖顺序启动
-	started := make(map[string]bool)
-	for _, id := range ids {
-		if err := m.startWithDeps(id, started); err != nil {
-			m.logger.Error("启动插件失败", "id", id, "error", err)
+	// 收集所有已加载（非运行中）的插件
+	var toStart []*Instance
+	for _, inst := range m.plugins {
+		if inst.Status != StatusRunning {
+			toStart = append(toStart, inst)
 		}
 	}
+
+	if len(toStart) == 0 {
+		return nil
+	}
+
+	// 拓扑排序
+	sorted, err := TopologicalSort(toStart)
+	if err != nil {
+		m.logger.Error("插件拓扑排序失败", "error", err)
+		// 降级：按默认顺序启动
+		sorted = toStart
+	}
+
+	// 按序启动
+	var startErrors []string
+	for _, inst := range sorted {
+		if err := m.startLocked(inst.Meta.ID); err != nil {
+			startErrors = append(startErrors, fmt.Sprintf("%s: %v", inst.Meta.ID, err))
+			m.logger.Error("启动插件失败", "id", inst.Meta.ID, "error", err)
+		}
+	}
+
+	if len(startErrors) > 0 {
+		return fmt.Errorf("部分插件启动失败: %v", startErrors)
+	}
 	return nil
+}
+
+// Restart 重启插件
+func (m *Manager) Restart(pluginID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	instance, exists := m.plugins[pluginID]
+	if !exists {
+		return fmt.Errorf("插件 %s 未安装", pluginID)
+	}
+
+	// 先停止
+	if instance.Status == StatusRunning {
+		if err := instance.Plugin.Stop(); err != nil {
+			m.logger.Error("重启时停止插件失败", "id", pluginID, "error", err)
+		}
+		instance.Status = StatusStopped
+	}
+
+	// 再启动
+	return m.startLocked(pluginID)
 }
 
 // GetAll 获取所有插件实例
@@ -218,6 +275,17 @@ func (m *Manager) GetAll() []*Instance {
 		instances = append(instances, inst)
 	}
 	return instances
+}
+
+// Get 获取指定插件
+func (m *Manager) Get(pluginID string) (*Instance, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	inst, ok := m.plugins[pluginID]
+	if !ok {
+		return nil, fmt.Errorf("插件 %s 未安装", pluginID)
+	}
+	return inst, nil
 }
 
 // HealthCheck 健康检查
@@ -234,42 +302,39 @@ func (m *Manager) HealthCheck() map[string]HealthStatus {
 	return results
 }
 
-// checkDependencies 检查依赖是否满足
+// Stats 插件系统统计
+func (m *Manager) Stats() map[string]interface{} {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	loaded, running, stopped, errored := 0, 0, 0, 0
+	for _, inst := range m.plugins {
+		switch inst.Status {
+		case StatusLoaded:
+			loaded++
+		case StatusRunning:
+			running++
+		case StatusStopped:
+			stopped++
+		case StatusError:
+			errored++
+		}
+	}
+	return map[string]interface{}{
+		"total":   len(m.plugins),
+		"loaded":  loaded,
+		"running": running,
+		"stopped": stopped,
+		"error":   errored,
+	}
+}
+
+// checkDependencies 检查依赖是否满足（调用方须持有锁）
 func (m *Manager) checkDependencies(deps []string) error {
 	for _, dep := range deps {
 		if _, exists := m.plugins[dep]; !exists {
 			return fmt.Errorf("缺少依赖插件: %s", dep)
 		}
 	}
-	return nil
-}
-
-// startWithDeps 按依赖顺序启动
-func (m *Manager) startWithDeps(id string, started map[string]bool) error {
-	if started[id] {
-		return nil
-	}
-
-	m.mu.RLock()
-	inst, exists := m.plugins[id]
-	m.mu.RUnlock()
-
-	if !exists {
-		return fmt.Errorf("插件 %s 不存在", id)
-	}
-
-	// 先启动依赖
-	for _, dep := range inst.Meta.Dependencies {
-		if err := m.startWithDeps(dep, started); err != nil {
-			return err
-		}
-	}
-
-	// 启动自己
-	if err := m.Start(id); err != nil {
-		return err
-	}
-
-	started[id] = true
 	return nil
 }
