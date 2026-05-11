@@ -6,10 +6,10 @@
       <form @submit.prevent="onSubmit">
         <input v-model="form.tenantCode" placeholder="服务商编码（默认 demo-provider）" required />
         <input v-model="form.username" placeholder="用户名（默认 admin）" required />
-        <input v-model="form.password" placeholder="密码（默认 mu_admin_2026）" type="password" required />
+        <input v-model="form.password" placeholder="密码（默认 admin123）" type="password" required />
         <button :disabled="loading">{{ loading ? '登录中…' : '登录' }}</button>
         <p v-if="err" class="err">{{ err }}</p>
-        <p class="hint">默认账号：<code>demo-provider / admin / mu_admin_2026</code></p>
+        <p class="hint">默认账号：<code>demo-provider / admin / admin123</code></p>
       </form>
     </div>
   </div>

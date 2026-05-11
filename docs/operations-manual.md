@@ -8,7 +8,7 @@
 
 ### 1.1 登录
 - 入口：`https://admin.mu-framework.com`
-- 初始账号：`admin` / `mu_admin_2026`（请首次登录后立即修改）
+- 初始账号：`admin` / `admin123`（请首次登录后立即修改）
 
 ### 1.2 核心操作
 

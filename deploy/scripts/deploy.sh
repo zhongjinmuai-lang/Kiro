@@ -47,9 +47,9 @@ case $ENV in
     echo "  Swagger:    http://localhost:8080/swagger/index.html"
     echo ""
     echo "  默认账号（三个后台通用，修改后请更新数据库）"
-    echo "  - 开发商总后台:   mu-platform / admin / mu_admin_2026"
-    echo "  - 服务商管理后台: demo-provider / admin / mu_admin_2026"
-    echo "  - 终端客户后台:   demo-family / admin / mu_admin_2026"
+    echo "  - 开发商总后台:   mu-platform / admin / admin123"
+    echo "  - 服务商管理后台: demo-provider / admin / admin123"
+    echo "  - 终端客户后台:   demo-family / admin / admin123"
     echo "========================================"
     ;;
   stop)

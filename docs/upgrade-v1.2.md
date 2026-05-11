@@ -37,7 +37,7 @@
 - **Dockerfile.backend** 使用 `golang:1.23-alpine`（公共镜像可用），多阶段构建
 - **nginx.conf** 三个 server 块分别托管三个前端，含 WebSocket 代理
 - **init-db.sql** 执行顺序修正：001 → 002 → 004 → 005 → 003(seed)
-- **003_seed_data.sql** 创建三级租户 + 各级默认 admin 账号（密码统一 `mu_admin_2026`）
+- **003_seed_data.sql** 创建三级租户 + 各级默认 admin 账号（密码统一 `admin123`）
 - **005_genealogy_tables.sql** 新增族谱域建表 + RLS 策略
 - **deploy.sh** 改为 docker compose v2 + 健康检查 + 友好输出
 
@@ -50,9 +50,9 @@
 ### 🎯 默认账号（一键部署后可直接登录）
 | 后台 | tenantCode | username | password |
 |------|-----------|----------|----------|
-| 开发商总后台 | `mu-platform` | `admin` | `mu_admin_2026` |
-| 服务商 SaaS 后台 | `demo-provider` | `admin` | `mu_admin_2026` |
-| 终端客户业务后台 | `demo-family` | `admin` | `mu_admin_2026` |
+| 开发商总后台 | `mu-platform` | `admin` | `admin123` |
+| 服务商 SaaS 后台 | `demo-provider` | `admin` | `admin123` |
+| 终端客户业务后台 | `demo-family` | `admin` | `admin123` |
 
 ### 📦 示例数据
 开箱包含 1 个分支 + 3 代族谱成员 + 1 条家族公告，方便立即体验族谱可视化。

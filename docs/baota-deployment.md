@@ -491,7 +491,7 @@ curl http://127.0.0.1:8080/version
 # 4. 登录测试
 curl -X POST http://127.0.0.1:8081/admin/v1/auth/login \
   -H "Content-Type: application/json" \
-  -d '{"tenant_code":"mu-platform","username":"admin","password":"mu_admin_2026"}'
+  -d '{"tenant_code":"mu-platform","username":"admin","password":"admin123"}'
 # 应返回 access_token
 ```
 

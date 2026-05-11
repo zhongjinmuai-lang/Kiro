@@ -39,7 +39,7 @@
 ### 2.3 初始数据（`003_seed_data.sql`）
 
 - 默认开发商租户 `mu-platform`
-- 超级管理员：`admin` / `mu_admin_2026`（bcrypt 加密）
+- 超级管理员：`admin` / `admin123`（bcrypt 加密）
 - 预置 20+ 权限定义（支付/存储/通知/智能体/租户）
 
 ### 2.4 行级安全（`004_rls_policies.sql`）

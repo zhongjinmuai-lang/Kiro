@@ -1,7 +1,7 @@
 -- ============================================================
 -- MU Framework 初始数据（种子）
 -- 创建开发商/服务商/终端客户三级租户 + 各级默认管理员
--- 密码统一：mu_admin_2026（bcrypt 加密，与 Go bcrypt 库兼容）
+-- 密码统一：admin123（bcrypt 加密，与 Go bcrypt 库兼容）
 -- ============================================================
 
 -- 开发商租户
@@ -46,23 +46,23 @@ BEGIN
     VALUES (uuid_generate_v4(), cus_tid, '家族族长', 'family_head', 'customer', '["*"]', 1)
     RETURNING id INTO cus_role_id;
 
-    -- 默认管理员用户（密码：mu_admin_2026）
+    -- 默认管理员用户（密码：admin123）
     -- 开发商
     INSERT INTO users (id, tenant_id, username, password, nickname, role_id, status)
     VALUES (uuid_generate_v4(), dev_tid, 'admin',
-            crypt('mu_admin_2026', gen_salt('bf')),
+            crypt('admin123', gen_salt('bf')),
             'MU开发商管理员', dev_role_id, 1);
 
     -- 服务商
     INSERT INTO users (id, tenant_id, username, password, nickname, role_id, status)
     VALUES (uuid_generate_v4(), pro_tid, 'admin',
-            crypt('mu_admin_2026', gen_salt('bf')),
+            crypt('admin123', gen_salt('bf')),
             '示例服务商', pro_role_id, 1);
 
     -- 终端客户
     INSERT INTO users (id, tenant_id, username, password, nickname, role_id, status)
     VALUES (uuid_generate_v4(), cus_tid, 'admin',
-            crypt('mu_admin_2026', gen_salt('bf')),
+            crypt('admin123', gen_salt('bf')),
             '示例家族族长', cus_role_id, 1);
 
     -- 初始化权限定义
