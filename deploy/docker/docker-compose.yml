@@ -3,7 +3,7 @@ version: "3.9"
 services:
   # ===== 基础设施 =====
   postgres:
-    image: postgres:18.3-alpine
+    image: postgres:16-alpine
     container_name: mu-postgres
     environment:
       POSTGRES_USER: mu_admin

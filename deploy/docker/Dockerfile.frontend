@@ -2,6 +2,8 @@
 FROM node:22-alpine AS builder
 
 RUN apk add --no-cache git
+# 国内 npm 镜像加速（中国部署环境优化）
+RUN npm config set registry https://registry.npmmirror.com
 
 WORKDIR /build
 

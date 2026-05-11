@@ -4,6 +4,10 @@ FROM golang:1.23-alpine AS builder
 
 RUN apk add --no-cache git ca-certificates tzdata
 
+# 国内 Go 代理加速（中国部署环境优化）
+ENV GOPROXY=https://goproxy.cn,direct
+ENV GOSUMDB=off
+
 WORKDIR /build/backend
 
 # 先复制 go.mod / go.sum 利用 Docker 缓存
