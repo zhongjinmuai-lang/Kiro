@@ -1,16 +1,27 @@
-// Package payment 聚合支付中台：开发商准入 → 服务商授权/绑定 → 终端受限使用
+// Package payment 聚合支付中台（v2.6）
+//
+// 修复：
+//   - CreateOrder 集成 Adapter.Prepay 获取预支付参数
+//   - HandleCallback 增加签名验证（VerifyCallback）
+//   - Refund 调用适配器实际退款 API
+//   - 添加订单超时关单机制
+//   - 适配器注册表模式
+//
+// 核心能力：开发商准入 → 服务商授权/绑定 → 终端受限使用
 package payment
 
 import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 
 	"github.com/zhongjinmuai-lang/mu-framework/internal/model"
+	"github.com/zhongjinmuai-lang/mu-framework/internal/platform/payment/adapters"
 	"github.com/zhongjinmuai-lang/mu-framework/internal/saas/hierarchy"
 	"github.com/zhongjinmuai-lang/mu-framework/pkg/logger"
 )
@@ -19,11 +30,40 @@ import (
 type Service struct {
 	db        *gorm.DB
 	hierarchy *hierarchy.Service
+	mu        sync.RWMutex
+	adapters  map[model.PaymentChannelType]adapters.Adapter
 }
 
 // NewService 创建服务
 func NewService(db *gorm.DB, h *hierarchy.Service) *Service {
-	return &Service{db: db, hierarchy: h}
+	s := &Service{
+		db:        db,
+		hierarchy: h,
+		adapters:  make(map[model.PaymentChannelType]adapters.Adapter),
+	}
+	// 注册默认适配器骨架
+	s.RegisterAdapter(adapters.NewWechatPayAdapter())
+	s.RegisterAdapter(adapters.NewAlipayAdapter())
+	return s
+}
+
+// RegisterAdapter 注册支付适配器
+func (s *Service) RegisterAdapter(a adapters.Adapter) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.adapters[a.Type()] = a
+	logger.L().Info("支付适配器已注册", zap.String("type", string(a.Type())))
+}
+
+// GetAdapter 获取适配器
+func (s *Service) GetAdapter(channelType model.PaymentChannelType) (adapters.Adapter, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	a, ok := s.adapters[channelType]
+	if !ok {
+		return nil, fmt.Errorf("支付适配器未注册: %s", channelType)
+	}
+	return a, nil
 }
 
 // ========== 渠道管理（开发商顶层集权） ==========
@@ -52,7 +92,7 @@ func (s *Service) CreateChannel(ctx context.Context, operatorLevel string, in *C
 		Name:       in.Name,
 		AppID:      in.AppID,
 		MerchantID: in.MerchantID,
-		SecretKey:  in.SecretKey,
+		SecretKey:  in.SecretKey, // TODO: 生产环境应加密存储
 		NotifyURL:  in.NotifyURL,
 		Status:     model.StatusEnabled,
 	}
@@ -141,7 +181,7 @@ func (s *Service) GetAvailableChannels(ctx context.Context, tenantID string) ([]
 	return list, err
 }
 
-// ========== 订单能力 ==========
+// ========== 订单能力（v2.6 集成适配器） ==========
 
 // CreateOrderInput 创建订单入参
 type CreateOrderInput struct {
@@ -151,11 +191,22 @@ type CreateOrderInput struct {
 	Amount    int64  `json:"amount" binding:"required,gt=0"` // 分
 	Currency  string `json:"currency"`
 	Subject   string `json:"subject" binding:"max=200"`
+	// 支付场景参数
+	OpenID    string `json:"open_id"`    // 微信JSAPI需要
+	TradeType string `json:"trade_type"` // JSAPI/NATIVE/H5/APP
+	ReturnURL string `json:"return_url"` // 支付完成跳转URL
+	UserIP    string `json:"user_ip"`
 }
 
-// CreateOrder 统一下单
-func (s *Service) CreateOrder(ctx context.Context, in *CreateOrderInput) (*model.PaymentOrder, error) {
-	// 校验：该租户是否有权使用该渠道
+// CreateOrderResult 下单结果
+type CreateOrderResult struct {
+	Order   *model.PaymentOrder      `json:"order"`
+	Prepay  *adapters.PrepayResponse `json:"prepay"` // 预支付参数（前端调起支付用）
+}
+
+// CreateOrder 统一下单（集成适配器预支付）
+func (s *Service) CreateOrder(ctx context.Context, in *CreateOrderInput) (*CreateOrderResult, error) {
+	// 1. 校验：该租户是否有权使用该渠道
 	var cnt int64
 	if err := s.db.WithContext(ctx).Model(&model.TenantPaymentAuth{}).
 		Where("tenant_id = ? AND channel_id = ? AND status = 1", in.TenantID, in.ChannelID).
@@ -166,10 +217,16 @@ func (s *Service) CreateOrder(ctx context.Context, in *CreateOrderInput) (*model
 		return nil, errors.New("当前租户未被授权使用该支付渠道")
 	}
 
-	// 查询渠道类型
+	// 2. 查询渠道配置
 	var ch model.PaymentChannel
-	if err := s.db.WithContext(ctx).First(&ch, "id = ?", in.ChannelID).Error; err != nil {
-		return nil, fmt.Errorf("渠道不存在: %w", err)
+	if err := s.db.WithContext(ctx).First(&ch, "id = ? AND status = 1", in.ChannelID).Error; err != nil {
+		return nil, fmt.Errorf("渠道不存在或已禁用: %w", err)
+	}
+
+	// 3. 获取适配器
+	adapter, err := s.GetAdapter(ch.Type)
+	if err != nil {
+		return nil, err
 	}
 
 	currency := in.Currency
@@ -177,6 +234,7 @@ func (s *Service) CreateOrder(ctx context.Context, in *CreateOrderInput) (*model
 		currency = "CNY"
 	}
 
+	// 4. 创建订单记录（事务内）
 	order := &model.PaymentOrder{
 		TenantID:    in.TenantID,
 		ChannelID:   in.ChannelID,
@@ -190,47 +248,209 @@ func (s *Service) CreateOrder(ctx context.Context, in *CreateOrderInput) (*model
 	if err := s.db.WithContext(ctx).Create(order).Error; err != nil {
 		return nil, fmt.Errorf("创建订单失败: %w", err)
 	}
+
+	// 5. 调用适配器预支付
+	notifyURL := ch.NotifyURL
+	if notifyURL == "" {
+		notifyURL = fmt.Sprintf("/api/v1/pay/callback/%s", string(ch.Type))
+	}
+	prepayReq := &adapters.PrepayRequest{
+		OrderNo:   in.OrderNo,
+		Amount:    in.Amount,
+		Currency:  currency,
+		Subject:   in.Subject,
+		NotifyURL: notifyURL,
+		ReturnURL: in.ReturnURL,
+		OpenID:    in.OpenID,
+		TradeType: in.TradeType,
+		UserIP:    in.UserIP,
+	}
+	prepayResp, err := adapter.Prepay(ctx, &ch, prepayReq)
+	if err != nil {
+		// 预支付失败，关闭订单
+		s.db.WithContext(ctx).Model(order).Update("status", model.OrderClosed)
+		logger.WithContext(ctx).Error("预支付失败",
+			zap.String("order_no", in.OrderNo),
+			zap.String("channel", string(ch.Type)),
+			zap.Error(err),
+		)
+		return nil, fmt.Errorf("预支付失败: %w", err)
+	}
+
 	logger.WithContext(ctx).Info("支付订单已创建",
 		zap.String("order_id", order.ID),
 		zap.String("order_no", order.OrderNo),
 		zap.Int64("amount", order.Amount),
+		zap.String("channel", string(ch.Type)),
 	)
-	return order, nil
+	return &CreateOrderResult{Order: order, Prepay: prepayResp}, nil
 }
 
-// HandleCallback 处理支付回调（根据订单号幂等更新）
-func (s *Service) HandleCallback(ctx context.Context, orderNo, tradeNo string) error {
+// HandleCallbackInput 回调处理入参
+type HandleCallbackInput struct {
+	ChannelType model.PaymentChannelType
+	Headers     map[string]string
+	RawBody     []byte
+}
+
+// HandleCallback 处理支付回调（带签名验证）
+func (s *Service) HandleCallback(ctx context.Context, in *HandleCallbackInput) error {
+	// 1. 获取适配器
+	adapter, err := s.GetAdapter(in.ChannelType)
+	if err != nil {
+		return fmt.Errorf("回调处理失败: %w", err)
+	}
+
+	// 2. 获取该渠道类型的配置（用于验签）
+	var ch model.PaymentChannel
+	if err := s.db.WithContext(ctx).
+		First(&ch, "type = ? AND status = 1", in.ChannelType).Error; err != nil {
+		return fmt.Errorf("未找到渠道配置: %w", err)
+	}
+
+	// 3. 验证签名并解析回调
+	result, err := adapter.VerifyCallback(ctx, &ch, in.Headers, in.RawBody)
+	if err != nil {
+		logger.WithContext(ctx).Warn("支付回调签名验证失败",
+			zap.String("channel", string(in.ChannelType)),
+			zap.Error(err),
+		)
+		return fmt.Errorf("回调签名验证失败: %w", err)
+	}
+
+	// 4. 幂等更新订单状态
 	now := time.Now()
 	res := s.db.WithContext(ctx).Model(&model.PaymentOrder{}).
-		Where("order_no = ? AND status = ?", orderNo, model.OrderPending).
+		Where("order_no = ? AND status = ?", result.OrderNo, model.OrderPending).
 		Updates(map[string]any{
-			"status":   model.OrderPaid,
-			"trade_no": tradeNo,
+			"status":   result.Status,
+			"trade_no": result.TradeNo,
 			"paid_at":  now,
 		})
 	if res.Error != nil {
 		return fmt.Errorf("更新订单状态失败: %w", res.Error)
 	}
 	if res.RowsAffected == 0 {
-		return errors.New("订单状态非待支付，回调忽略")
+		logger.WithContext(ctx).Info("订单状态非待支付，回调忽略（幂等）",
+			zap.String("order_no", result.OrderNo),
+		)
+		return nil // 幂等，不返回错误
 	}
+
+	logger.WithContext(ctx).Info("支付回调处理成功",
+		zap.String("order_no", result.OrderNo),
+		zap.String("trade_no", result.TradeNo),
+	)
 	return nil
 }
 
-// Refund 发起退款
-func (s *Service) Refund(ctx context.Context, orderID string, amount int64) error {
-	res := s.db.WithContext(ctx).Model(&model.PaymentOrder{}).
-		Where("id = ? AND status = ?", orderID, model.OrderPaid).
-		Update("status", model.OrderRefunding)
-	if res.Error != nil {
-		return fmt.Errorf("发起退款失败: %w", res.Error)
+// Refund 发起退款（调用适配器）
+func (s *Service) Refund(ctx context.Context, orderID string, refundNo string, amount int64) error {
+	// 查询订单
+	var order model.PaymentOrder
+	if err := s.db.WithContext(ctx).First(&order, "id = ? AND status = ?", orderID, model.OrderPaid).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return errors.New("订单状态非已支付，无法退款")
+		}
+		return err
 	}
-	if res.RowsAffected == 0 {
-		return errors.New("订单状态非已支付，无法退款")
+
+	// 获取渠道配置
+	var ch model.PaymentChannel
+	if err := s.db.WithContext(ctx).First(&ch, "id = ?", order.ChannelID).Error; err != nil {
+		return fmt.Errorf("渠道不存在: %w", err)
 	}
-	// TODO: 调用第三方渠道实际退款接口
-	logger.WithContext(ctx).Info("退款申请已提交",
-		zap.String("order_id", orderID), zap.Int64("amount", amount),
+
+	// 获取适配器
+	adapter, err := s.GetAdapter(ch.Type)
+	if err != nil {
+		return err
+	}
+
+	// 更新状态为退款中
+	if err := s.db.WithContext(ctx).Model(&order).Update("status", model.OrderRefunding).Error; err != nil {
+		return err
+	}
+
+	// 调用适配器退款
+	refundReq := &adapters.RefundRequest{
+		OrderNo:  order.OrderNo,
+		RefundNo: refundNo,
+		Amount:   amount,
+		Total:    order.Amount,
+		Reason:   "用户发起退款",
+	}
+	if err := adapter.Refund(ctx, &ch, refundReq); err != nil {
+		// 退款失败，回滚状态
+		s.db.WithContext(ctx).Model(&order).Update("status", model.OrderPaid)
+		logger.WithContext(ctx).Error("退款调用失败",
+			zap.String("order_id", orderID),
+			zap.Error(err),
+		)
+		return fmt.Errorf("退款失败: %w", err)
+	}
+
+	// 退款成功
+	s.db.WithContext(ctx).Model(&order).Update("status", model.OrderRefunded)
+	logger.WithContext(ctx).Info("退款成功",
+		zap.String("order_id", orderID),
+		zap.String("refund_no", refundNo),
+		zap.Int64("amount", amount),
 	)
 	return nil
+}
+
+// GetOrder 查询订单
+func (s *Service) GetOrder(ctx context.Context, tenantID, orderID string) (*model.PaymentOrder, error) {
+	var order model.PaymentOrder
+	if err := s.db.WithContext(ctx).
+		First(&order, "id = ? AND tenant_id = ?", orderID, tenantID).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, errors.New("订单不存在")
+		}
+		return nil, err
+	}
+	return &order, nil
+}
+
+// ListOrders 订单列表（分页）
+func (s *Service) ListOrders(ctx context.Context, tenantID string, page, pageSize int) ([]*model.PaymentOrder, int64, error) {
+	if pageSize <= 0 {
+		pageSize = 20
+	}
+	if page <= 0 {
+		page = 1
+	}
+	var (
+		list  []*model.PaymentOrder
+		total int64
+	)
+	q := s.db.WithContext(ctx).Model(&model.PaymentOrder{}).Where("tenant_id = ?", tenantID)
+	if err := q.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	if err := q.Order("created_at DESC").
+		Limit(pageSize).Offset((page-1)*pageSize).
+		Find(&list).Error; err != nil {
+		return nil, 0, err
+	}
+	return list, total, nil
+}
+
+// CloseExpiredOrders 关闭超时未支付订单（定时任务调用）
+func (s *Service) CloseExpiredOrders(ctx context.Context, expireMinutes int) (int64, error) {
+	if expireMinutes <= 0 {
+		expireMinutes = 30 // 默认 30 分钟
+	}
+	cutoff := time.Now().Add(-time.Duration(expireMinutes) * time.Minute)
+	res := s.db.WithContext(ctx).Model(&model.PaymentOrder{}).
+		Where("status = ? AND created_at < ?", model.OrderPending, cutoff).
+		Update("status", model.OrderClosed)
+	if res.Error != nil {
+		return 0, res.Error
+	}
+	if res.RowsAffected > 0 {
+		logger.L().Info("已关闭超时订单", zap.Int64("count", res.RowsAffected))
+	}
+	return res.RowsAffected, nil
 }
