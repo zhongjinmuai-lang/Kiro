@@ -6,10 +6,11 @@ import "time"
 type PaymentChannelType string
 
 const (
-	PayChannelWechat PaymentChannelType = "wechat" // 微信支付
-	PayChannelAlipay PaymentChannelType = "alipay" // 支付宝
-	PayChannelUnion  PaymentChannelType = "union"  // 银联
-	PayChannelStripe PaymentChannelType = "stripe" // Stripe
+	PayChannelWechat  PaymentChannelType = "wechat"  // 微信支付
+	PayChannelAlipay  PaymentChannelType = "alipay"  // 支付宝
+	PayChannelUnion   PaymentChannelType = "union"   // 银联
+	PayChannelStripe  PaymentChannelType = "stripe"  // Stripe
+	PayChannelSuixing PaymentChannelType = "suixing" // 随行付（天阙）
 )
 
 // PaymentOrderStatus 订单状态

@@ -85,3 +85,6 @@ func (a *AlipayAdapter) Refund(ctx context.Context, ch *model.PaymentChannel, re
 func (a *AlipayAdapter) VerifyCallback(ctx context.Context, ch *model.PaymentChannel, headers map[string]string, raw []byte) (*CallbackResult, error) {
 	return nil, errors.New("AlipayAdapter.VerifyCallback 待实现")
 }
+
+// SuixingPayAdapter 在 suixingpay.go 中完整实现
+// 使用 NewSuixingPayAdapter() 创建
