@@ -108,5 +108,11 @@ func (s *Service) getLevel(ctx context.Context, tenantID string) (string, error)
 		Select("level").
 		Where("id = ?", tenantID).
 		Scan(&lvl).Error
-	return lvl, err
+	if err != nil {
+		return "", fmt.Errorf("查询租户层级失败: %w", err)
+	}
+	if lvl == "" {
+		return "", fmt.Errorf("租户 %s 不存在或无层级信息", tenantID)
+	}
+	return lvl, nil
 }

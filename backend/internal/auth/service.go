@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"go.uber.org/zap"
@@ -142,20 +143,13 @@ func (s *Service) Logout(ctx context.Context, accessToken, refreshToken string) 
 }
 
 // Register 创建用户（管理员用）
+// 使用数据库唯一约束保证用户名唯一性（避免 Count+Create 的竞态窗口）
 func (s *Service) Register(ctx context.Context, in *RegisterInput) (*model.User, error) {
 	var t model.Tenant
 	if err := s.db.WithContext(ctx).First(&t, "id = ?", in.TenantID).Error; err != nil {
 		return nil, ErrTenantNotFound
 	}
-	var cnt int64
-	if err := s.db.WithContext(ctx).Model(&model.User{}).
-		Where("tenant_id = ? AND username = ?", in.TenantID, in.Username).
-		Count(&cnt).Error; err != nil {
-		return nil, err
-	}
-	if cnt > 0 {
-		return nil, ErrUsernameTaken
-	}
+
 	hash, err := bcrypt.GenerateFromPassword([]byte(in.Password), bcrypt.DefaultCost)
 	if err != nil {
 		return nil, fmt.Errorf("密码加密失败: %w", err)
@@ -171,10 +165,24 @@ func (s *Service) Register(ctx context.Context, in *RegisterInput) (*model.User,
 		Status:   model.StatusEnabled,
 	}
 	if err := s.db.WithContext(ctx).Create(u).Error; err != nil {
+		// 捕获唯一约束冲突（PostgreSQL error code 23505）
+		if isDuplicateKeyError(err) {
+			return nil, ErrUsernameTaken
+		}
 		return nil, fmt.Errorf("创建用户失败: %w", err)
 	}
 	u.Password = ""
 	return u, nil
+}
+
+// isDuplicateKeyError 判断是否为唯一约束冲突（PostgreSQL 23505）
+func isDuplicateKeyError(err error) bool {
+	if err == nil {
+		return false
+	}
+	errStr := err.Error()
+	// PostgreSQL 唯一约束违反：ERROR: duplicate key value violates unique constraint
+	return strings.Contains(errStr, "duplicate key") || strings.Contains(errStr, "23505")
 }
 
 // ChangePassword 修改密码

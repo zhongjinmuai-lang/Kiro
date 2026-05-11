@@ -82,8 +82,17 @@ func (h *Handler) Logout(c *gin.Context) {
 
 // Me GET /api/v1/me
 func (h *Handler) Me(c *gin.Context) {
-	uid, _ := c.Get(middleware.CtxKeyUserID)
-	u, err := h.svc.Profile(c.Request.Context(), uid.(string))
+	uid, ok := c.Get(middleware.CtxKeyUserID)
+	if !ok {
+		response.Unauthorized(c, "用户信息缺失")
+		return
+	}
+	uidStr, ok := uid.(string)
+	if !ok || uidStr == "" {
+		response.Unauthorized(c, "用户ID无效")
+		return
+	}
+	u, err := h.svc.Profile(c.Request.Context(), uidStr)
 	if err != nil {
 		response.NotFound(c, err.Error())
 		return
@@ -93,13 +102,22 @@ func (h *Handler) Me(c *gin.Context) {
 
 // ChangePassword PUT /api/v1/auth/password
 func (h *Handler) ChangePassword(c *gin.Context) {
-	uid, _ := c.Get(middleware.CtxKeyUserID)
+	uid, ok := c.Get(middleware.CtxKeyUserID)
+	if !ok {
+		response.Unauthorized(c, "用户信息缺失")
+		return
+	}
+	uidStr, ok := uid.(string)
+	if !ok || uidStr == "" {
+		response.Unauthorized(c, "用户ID无效")
+		return
+	}
 	var in ChangePasswordInput
 	if err := c.ShouldBindJSON(&in); err != nil {
 		response.BadRequest(c, err.Error())
 		return
 	}
-	if err := h.svc.ChangePassword(c.Request.Context(), uid.(string), &in); err != nil {
+	if err := h.svc.ChangePassword(c.Request.Context(), uidStr, &in); err != nil {
 		switch {
 		case errors.Is(err, ErrPasswordMismatch):
 			response.BadRequest(c, "旧密码不正确")

@@ -1,11 +1,12 @@
-// Package agent MU 智能体协调器（v2.3）
+// Package agent MU 智能体协调器（v2.4）
 //
-// 将引擎、记忆、决策、进化、事件总线统一集成管理
+// 将引擎、记忆、决策、进化、事件总线、AI网关统一集成管理
 // 提供智能体的完整生命周期管理
 package agent
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
 	"go.uber.org/zap"
@@ -15,6 +16,7 @@ import (
 	"github.com/zhongjinmuai-lang/mu-framework/internal/agent/evolution"
 	"github.com/zhongjinmuai-lang/mu-framework/internal/agent/memory"
 	"github.com/zhongjinmuai-lang/mu-framework/internal/agent/registry"
+	"github.com/zhongjinmuai-lang/mu-framework/internal/ai"
 	"github.com/zhongjinmuai-lang/mu-framework/internal/core/config"
 	"github.com/zhongjinmuai-lang/mu-framework/pkg/logger"
 )
@@ -27,6 +29,7 @@ type Coordinator struct {
 	Evolution *evolution.Service
 	EventBus  *engine.EventBus
 	Registry  *registry.Registry
+	AI        *ai.Gateway
 
 	hook *engine.EvolutionHook
 	cfg  *config.Config
@@ -64,7 +67,10 @@ func NewCoordinator(cfg *config.Config) (*Coordinator, error) {
 	// 6. 创建能力注册中心
 	reg := registry.NewRegistry()
 
-	// 7. 创建进化钩子（连接引擎与进化服务）
+	// 7. 创建 AI 网关
+	aiGw := ai.NewGateway(nil)
+
+	// 8. 创建进化钩子（连接引擎与进化服务）
 	hook := engine.NewEvolutionHook(eng, evoService, eventBus)
 
 	return &Coordinator{
@@ -74,6 +80,7 @@ func NewCoordinator(cfg *config.Config) (*Coordinator, error) {
 		Evolution: evoService,
 		EventBus:  eventBus,
 		Registry:  reg,
+		AI:        aiGw,
 		hook:      hook,
 		cfg:       cfg,
 	}, nil
@@ -125,6 +132,7 @@ func (c *Coordinator) Stats() map[string]interface{} {
 		"decision":  c.Decision.Stats(),
 		"registry":  c.Registry.Stats(),
 		"plugins":   c.Engine.GetPluginManager().Stats(),
+		"ai":        c.AI.Stats(),
 	}
 }
 
@@ -144,13 +152,50 @@ func (c *Coordinator) registerBuiltinHandlers() {
 		return fmt.Sprintf("找到 %d 条相关记忆", len(entries)), nil
 	})
 
+	// AI 对话任务（智能路由，自动降级）
+	c.Engine.RegisterHandler("ai.chat", func(ctx context.Context, task *engine.Task) (string, error) {
+		var req ai.ChatRequest
+		if err := json.Unmarshal([]byte(task.Payload), &req); err != nil {
+			// 如果 payload 不是 JSON，当作纯文本消息
+			req = ai.ChatRequest{
+				Messages: []ai.Message{{Role: ai.RoleUser, Content: task.Payload}},
+			}
+		}
+		resp, err := c.AI.Chat(ctx, "", &req)
+		if err != nil {
+			return "", fmt.Errorf("AI 调用失败: %w", err)
+		}
+		return resp.Content, nil
+	})
+
+	// AI 指定供应商对话
+	c.Engine.RegisterHandler("ai.chat.provider", func(ctx context.Context, task *engine.Task) (string, error) {
+		var payload struct {
+			Provider string       `json:"provider"`
+			Messages []ai.Message `json:"messages"`
+			Model    string       `json:"model"`
+		}
+		if err := json.Unmarshal([]byte(task.Payload), &payload); err != nil {
+			return "", fmt.Errorf("解析 AI 任务参数失败: %w", err)
+		}
+		resp, err := c.AI.Chat(ctx, ai.Provider(payload.Provider), &ai.ChatRequest{
+			Model:    payload.Model,
+			Messages: payload.Messages,
+		})
+		if err != nil {
+			return "", err
+		}
+		return resp.Content, nil
+	})
+
 	// 健康检查任务
 	c.Engine.RegisterHandler("system.health", func(ctx context.Context, task *engine.Task) (string, error) {
 		stats := c.Stats()
-		return fmt.Sprintf("系统正常: %v", stats), nil
+		data, _ := json.Marshal(stats)
+		return string(data), nil
 	})
 
-	logger.L().Info("内置任务处理器已注册", zap.Int("count", 3))
+	logger.L().Info("内置任务处理器已注册", zap.Int("count", 5))
 }
 
 // ========== 默认动作执行器 ==========

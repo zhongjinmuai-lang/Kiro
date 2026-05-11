@@ -15,15 +15,9 @@ const dbKey = "db"
 
 // TenantRLS 激活 PostgreSQL 行级安全（RLS）
 //
-// 【v1.5 关键修复】
-// 旧版使用 set_config(_, true)（事务级）在 GORM 连接池下会立即失效：
-// 每个 Exec 从池中取新连接，set_config 作用仅限该次调用的那个事务，
-// 业务 SQL 再取新连接时，RLS 上下文已丢失，多租户隔离完全失败。
-//
-// 修复方案：
-//  1. 开启一个 Transaction，所有业务 SQL 走同一事务
-//  2. 在事务内先 set_config，确保 RLS 会话变量可见
-//  3. 请求结束统一提交或回滚
+// 【v2.4 性能优化】
+// - GET/HEAD 请求使用 session 级 set_config（不开事务，减少连接占用）
+// - POST/PUT/DELETE 请求开启事务确保 RLS 与业务 SQL 在同一连接
 //
 // 使用方式（业务 handler 中）：
 //
@@ -41,7 +35,23 @@ func TenantRLS(db *gorm.DB) gin.HandlerFunc {
 		lvl, _ := c.Get(CtxKeyLevel)
 		lvlStr, _ := lvl.(string)
 
-		// 开启事务确保 RLS 与业务 SQL 在同一连接
+		// 只读请求：使用 session 级 set_config（无需事务，性能更好）
+		if c.Request.Method == "GET" || c.Request.Method == "HEAD" {
+			session := db.WithContext(c.Request.Context()).Session(&gorm.Session{})
+			if tid != "" {
+				session.Exec("SELECT set_config('app.current_tenant_id', ?, false)", tid)
+			}
+			if lvlStr != "" {
+				session.Exec("SELECT set_config('app.current_tenant_level', ?, false)", lvlStr)
+			}
+			c.Set(dbKey, session)
+			ctx := context.WithValue(c.Request.Context(), ctxDBKey{}, session)
+			c.Request = c.Request.WithContext(ctx)
+			c.Next()
+			return
+		}
+
+		// 写请求：开启事务确保 RLS 与业务 SQL 在同一连接
 		tx := db.WithContext(c.Request.Context()).Begin()
 		if tx.Error != nil {
 			response.InternalError(c, "数据库事务启动失败: "+tx.Error.Error())

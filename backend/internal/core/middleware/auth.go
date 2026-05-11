@@ -63,17 +63,17 @@ func Auth(mgr *jwt.Manager) gin.HandlerFunc {
 	}
 }
 
-// extractToken 从 Header / Query 中提取 Token
+// extractToken 从 Header 中提取 Token
+// 安全策略：仅从 Authorization Header 提取，禁止 URL Query 传递（防止日志/Referer 泄露）
 func extractToken(c *gin.Context) string {
 	h := c.GetHeader("Authorization")
-	if h != "" {
-		if strings.HasPrefix(h, "Bearer ") {
-			return strings.TrimPrefix(h, "Bearer ")
-		}
-		return h
+	if h == "" {
+		return ""
 	}
-	// 兼容少量场景从 query 取（如下载链接）
-	return c.Query("access_token")
+	if strings.HasPrefix(h, "Bearer ") {
+		return strings.TrimPrefix(h, "Bearer ")
+	}
+	return h
 }
 
 // RequireLevel 层级校验：仅允许指定层级的租户访问

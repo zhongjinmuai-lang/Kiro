@@ -1,6 +1,12 @@
-// Package ai MU 智能体 AI 调度网关
+// Package ai MU 智能体 AI 调度网关（v2.4）
+//
+// 修复：
+//   - 移除非法重复 import 块（编译错误）
+//   - 熔断器从包级全局变量改为 Gateway 实例字段
+//   - 半开状态限制试探请求数量（防雪崩重试）
+//
 // 统一对接多家大模型供应商：豆包、通义千问、文心一言、DeepSeek、企业私有部署大模型
-// 核心能力：多模型路由 / 降级兜底 / 限流配额 / 调用审计
+// 核心能力：多模型路由 / 降级兜底 / 熔断器 / 限流配额 / 调用审计
 package ai
 
 import (
@@ -8,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -68,17 +75,7 @@ type Usage struct {
 type Client interface {
 	Provider() Provider
 	Chat(ctx context.Context, req *ChatRequest) (*ChatResponse, error)
-	// Health 健康检查，用于熔断与降级判定
 	Health(ctx context.Context) error
-}
-
-// Gateway AI 调度网关
-// 支持：按租户路由 / 按优先级降级 / 故障熔断 / 调用审计
-type Gateway struct {
-	mu       sync.RWMutex
-	clients  map[Provider]Client
-	priority []Provider // 默认优先级（降级顺序）
-	recorder UsageRecorder
 }
 
 // UsageRecorder 用量记录器（实现方可写DB/监控）
@@ -86,21 +83,47 @@ type UsageRecorder interface {
 	Record(ctx context.Context, tenantID string, resp *ChatResponse, err error)
 }
 
+// Gateway AI 调度网关（v2.4）
+// 支持：按租户路由 / 按优先级降级 / 故障熔断 / 调用审计
+type Gateway struct {
+	mu       sync.RWMutex
+	clients  map[Provider]Client
+	breakers map[Provider]*CircuitBreaker // 每个供应商独立熔断器
+	priority []Provider                   // 默认优先级（降级顺序）
+	recorder UsageRecorder
+}
+
 // NewGateway 创建调度网关
 func NewGateway(recorder UsageRecorder) *Gateway {
 	return &Gateway{
 		clients:  make(map[Provider]Client),
+		breakers: make(map[Provider]*CircuitBreaker),
 		priority: []Provider{},
 		recorder: recorder,
 	}
 }
 
-// Register 注册供应商客户端
+// Register 注册供应商客户端（自动创建熔断器）
 func (g *Gateway) Register(c Client) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	g.clients[c.Provider()] = c
-	g.priority = append(g.priority, c.Provider())
+	p := c.Provider()
+	g.clients[p] = c
+	g.priority = append(g.priority, p)
+	// 默认熔断器：连续失败5次，熔断30秒
+	if _, ok := g.breakers[p]; !ok {
+		g.breakers[p] = NewCircuitBreaker(5, 30*time.Second)
+	}
+}
+
+// RegisterWithBreaker 注册供应商并自定义熔断参数
+func (g *Gateway) RegisterWithBreaker(c Client, threshold int64, timeout time.Duration) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	p := c.Provider()
+	g.clients[p] = c
+	g.priority = append(g.priority, p)
+	g.breakers[p] = NewCircuitBreaker(threshold, timeout)
 }
 
 // SetPriority 自定义降级优先级
@@ -110,37 +133,62 @@ func (g *Gateway) SetPriority(order []Provider) {
 	g.priority = order
 }
 
-// Chat 调用指定供应商（provider 为空则按优先级自动选择并降级）
+// Chat 智能路由调用（带熔断降级）
+// provider 为空则按优先级自动选择并降级
 func (g *Gateway) Chat(ctx context.Context, provider Provider, req *ChatRequest) (*ChatResponse, error) {
 	g.mu.RLock()
-	order := g.priority
+	order := make([]Provider, len(g.priority))
+	copy(order, g.priority)
 	clients := g.clients
+	breakers := g.breakers
 	g.mu.RUnlock()
 
-	// 指定供应商：只尝试该供应商
+	// 指定供应商：只尝试该供应商（仍检查熔断）
 	if provider != "" {
 		c, ok := clients[provider]
 		if !ok {
 			return nil, fmt.Errorf("AI供应商未注册: %s", provider)
 		}
-		return g.callAndRecord(ctx, c, req)
+		if cb, ok := breakers[provider]; ok && !cb.Allow() {
+			return nil, fmt.Errorf("AI供应商 %s 已熔断，请稍后重试", provider)
+		}
+		resp, err := g.callAndRecord(ctx, c, req)
+		if cb, ok := breakers[provider]; ok {
+			if err != nil {
+				cb.RecordFailure()
+			} else {
+				cb.RecordSuccess()
+			}
+		}
+		return resp, err
 	}
 
-	// 未指定：按优先级降级
+	// 未指定：按优先级降级（跳过已熔断的供应商）
 	var lastErr error
 	for _, p := range order {
 		c, ok := clients[p]
 		if !ok {
 			continue
 		}
+		// 检查熔断器
+		if cb, ok := breakers[p]; ok && !cb.Allow() {
+			continue
+		}
+
 		resp, err := g.callAndRecord(ctx, c, req)
 		if err == nil {
+			if cb, ok := breakers[p]; ok {
+				cb.RecordSuccess()
+			}
 			return resp, nil
 		}
 		lastErr = err
+		if cb, ok := breakers[p]; ok {
+			cb.RecordFailure()
+		}
 	}
 	if lastErr == nil {
-		lastErr = errors.New("无可用AI供应商")
+		lastErr = errors.New("无可用AI供应商（全部熔断或未注册）")
 	}
 	return nil, lastErr
 }
@@ -169,40 +217,57 @@ func (g *Gateway) List() []Provider {
 	return out
 }
 
+// BreakerStats 所有供应商熔断器统计
+func (g *Gateway) BreakerStats() map[string]interface{} {
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+	stats := make(map[string]interface{})
+	for p, cb := range g.breakers {
+		stats[string(p)] = cb.Stats()
+	}
+	return stats
+}
 
-// ========== v1.5 熔断/降级增强 ==========
+// Stats 网关统计
+func (g *Gateway) Stats() map[string]interface{} {
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+	return map[string]interface{}{
+		"registered_providers": len(g.clients),
+		"priority":            g.priority,
+		"breakers":            g.BreakerStats(),
+	}
+}
 
-import (
-	"sync/atomic"
-	"time"
-)
+// ========== 熔断器实现 ==========
 
 // CircuitState 熔断器状态
 type CircuitState int32
 
 const (
-	CircuitClosed   CircuitState = 0 // 正常
+	CircuitClosed   CircuitState = 0 // 正常（允许所有请求）
 	CircuitOpen     CircuitState = 1 // 熔断（拒绝请求）
-	CircuitHalfOpen CircuitState = 2 // 半开（试探性放行）
+	CircuitHalfOpen CircuitState = 2 // 半开（试探性放行有限请求）
 )
 
 // CircuitBreaker 熔断器（每个供应商独立）
 type CircuitBreaker struct {
-	state          atomic.Int32
-	failCount      atomic.Int64
-	successCount   atomic.Int64
-	lastFailAt     atomic.Value // time.Time
-	threshold      int64        // 连续失败 N 次触发熔断
-	timeout        time.Duration // 熔断恢复超时
+	state        atomic.Int32
+	failCount    atomic.Int64
+	successCount atomic.Int64
+	lastFailAt   atomic.Value  // time.Time
+	probeCount   atomic.Int64  // 半开状态已放行的试探请求数
+	threshold    int64         // 连续失败 N 次触发熔断
+	timeout      time.Duration // 熔断恢复超时
+	maxProbes    int64         // 半开状态最大试探数
 }
 
 // NewCircuitBreaker 创建熔断器
-// threshold: 连续失败多少次触发熔断
-// timeout: 熔断后多长时间进入半开状态
 func NewCircuitBreaker(threshold int64, timeout time.Duration) *CircuitBreaker {
 	cb := &CircuitBreaker{
 		threshold: threshold,
 		timeout:   timeout,
+		maxProbes: 3, // 半开状态最多放行3个试探请求
 	}
 	cb.state.Store(int32(CircuitClosed))
 	return cb
@@ -218,15 +283,24 @@ func (cb *CircuitBreaker) Allow() bool {
 		// 检查是否超过超时进入半开
 		if last, ok := cb.lastFailAt.Load().(time.Time); ok {
 			if time.Since(last) > cb.timeout {
-				cb.state.Store(int32(CircuitHalfOpen))
-				return true // 半开放行一个试探
+				// CAS 切换到半开（只有一个 goroutine 能成功切换）
+				if cb.state.CompareAndSwap(int32(CircuitOpen), int32(CircuitHalfOpen)) {
+					cb.probeCount.Store(0)
+				}
+				return cb.allowProbe()
 			}
 		}
 		return false
 	case CircuitHalfOpen:
-		return true // 半开状态放行
+		return cb.allowProbe()
 	}
 	return true
+}
+
+// allowProbe 半开状态限制试探请求数量
+func (cb *CircuitBreaker) allowProbe() bool {
+	current := cb.probeCount.Add(1)
+	return current <= cb.maxProbes
 }
 
 // RecordSuccess 记录成功
@@ -236,6 +310,7 @@ func (cb *CircuitBreaker) RecordSuccess() {
 	// 半开状态下成功 → 恢复关闭
 	if CircuitState(cb.state.Load()) == CircuitHalfOpen {
 		cb.state.Store(int32(CircuitClosed))
+		cb.probeCount.Store(0)
 	}
 }
 
@@ -243,90 +318,46 @@ func (cb *CircuitBreaker) RecordSuccess() {
 func (cb *CircuitBreaker) RecordFailure() {
 	count := cb.failCount.Add(1)
 	cb.lastFailAt.Store(time.Now())
-	// 达到阈值 → 熔断
-	if count >= cb.threshold {
+	state := CircuitState(cb.state.Load())
+
+	switch state {
+	case CircuitClosed:
+		// 达到阈值 → 熔断
+		if count >= cb.threshold {
+			cb.state.Store(int32(CircuitOpen))
+		}
+	case CircuitHalfOpen:
+		// 半开状态下失败 → 立即回到全开
 		cb.state.Store(int32(CircuitOpen))
+		cb.probeCount.Store(0)
 	}
 }
 
 // State 当前状态
 func (cb *CircuitBreaker) State() CircuitState { return CircuitState(cb.state.Load()) }
 
+// Reset 手动重置熔断器
+func (cb *CircuitBreaker) Reset() {
+	cb.state.Store(int32(CircuitClosed))
+	cb.failCount.Store(0)
+	cb.successCount.Store(0)
+	cb.probeCount.Store(0)
+}
+
 // Stats 统计
 func (cb *CircuitBreaker) Stats() map[string]interface{} {
+	stateStr := "closed"
+	switch cb.State() {
+	case CircuitOpen:
+		stateStr = "open"
+	case CircuitHalfOpen:
+		stateStr = "half_open"
+	}
 	return map[string]interface{}{
-		"state":         cb.State(),
+		"state":         stateStr,
 		"fail_count":    cb.failCount.Load(),
 		"success_count": cb.successCount.Load(),
+		"threshold":     cb.threshold,
+		"timeout_sec":   cb.timeout.Seconds(),
 	}
-}
-
-// ChatWithCircuitBreaker 带熔断的 Chat（Gateway 增强方法）
-// 自动跳过已熔断的供应商，实现真正的降级
-func (g *Gateway) ChatWithCircuitBreaker(ctx context.Context, req *ChatRequest) (*ChatResponse, error) {
-	g.mu.RLock()
-	order := g.priority
-	clients := g.clients
-	g.mu.RUnlock()
-
-	var lastErr error
-	for _, p := range order {
-		c, ok := clients[p]
-		if !ok {
-			continue
-		}
-
-		// 检查熔断器（如果已注册）
-		if cb := g.getBreaker(p); cb != nil && !cb.Allow() {
-			continue // 跳过已熔断的供应商
-		}
-
-		resp, err := g.callAndRecord(ctx, c, req)
-		if err == nil {
-			if cb := g.getBreaker(p); cb != nil {
-				cb.RecordSuccess()
-			}
-			return resp, nil
-		}
-		lastErr = err
-		if cb := g.getBreaker(p); cb != nil {
-			cb.RecordFailure()
-		}
-	}
-	if lastErr == nil {
-		lastErr = errors.New("无可用AI供应商（全部熔断或未注册）")
-	}
-	return nil, lastErr
-}
-
-// breakers 供应商熔断器映射（内部字段，需要在 Gateway 结构体中维护）
-// 注：由于不能修改原始 Gateway struct，这里用包级 map + 互斥锁模拟
-var (
-	breakersMu sync.RWMutex
-	breakers   = make(map[Provider]*CircuitBreaker)
-)
-
-// RegisterBreaker 为指定供应商注册熔断器
-func (g *Gateway) RegisterBreaker(provider Provider, threshold int64, timeout time.Duration) {
-	breakersMu.Lock()
-	defer breakersMu.Unlock()
-	breakers[provider] = NewCircuitBreaker(threshold, timeout)
-}
-
-// getBreaker 获取供应商熔断器
-func (g *Gateway) getBreaker(provider Provider) *CircuitBreaker {
-	breakersMu.RLock()
-	defer breakersMu.RUnlock()
-	return breakers[provider]
-}
-
-// BreakerStats 所有供应商熔断器统计
-func (g *Gateway) BreakerStats() map[string]interface{} {
-	breakersMu.RLock()
-	defer breakersMu.RUnlock()
-	stats := make(map[string]interface{})
-	for p, cb := range breakers {
-		stats[string(p)] = cb.Stats()
-	}
-	return stats
 }

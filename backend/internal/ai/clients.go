@@ -1,3 +1,9 @@
+// Package ai AI客户端（v2.4）
+//
+// 修复：
+//   - Health 检查使用独立超时 context（防止无限阻塞）
+//   - 响应体添加大小限制（防止 OOM）
+//   - 共享 HTTP Client 提高连接复用率
 package ai
 
 import (
@@ -11,6 +17,9 @@ import (
 	"strings"
 	"time"
 )
+
+// 最大响应体大小：10MB（防止恶意/异常响应导致 OOM）
+const maxResponseSize = 10 * 1024 * 1024
 
 // openaiCompatRequest 兼容 OpenAI ChatCompletion 的请求体
 type openaiCompatRequest struct {
@@ -51,16 +60,28 @@ type openaiCompatClient struct {
 
 func (c *openaiCompatClient) Provider() Provider { return c.provider }
 
-// Health 轻量探测
+// Health 轻量探测（带独立超时，防止阻塞）
 func (c *openaiCompatClient) Health(ctx context.Context) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
-		strings.TrimSuffix(c.endpoint, "/chat/completions"), nil)
+	// 独立超时：最多 5 秒
+	healthCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	// 使用 HEAD 请求探测端点基础连通性
+	baseURL := strings.TrimSuffix(c.endpoint, "/chat/completions")
+	if baseURL == c.endpoint {
+		// endpoint 格式不标准，直接探测原端点
+		baseURL = c.endpoint
+	}
+	req, err := http.NewRequestWithContext(healthCtx, http.MethodHead, baseURL, nil)
 	if err != nil {
-		return err
+		return fmt.Errorf("AI 供应商 %s 健康检查请求构建失败: %w", c.provider, err)
+	}
+	if c.apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+c.apiKey)
 	}
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return err
+		return fmt.Errorf("AI 供应商 %s 不可达: %w", c.provider, err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 500 {
@@ -102,9 +123,10 @@ func (c *openaiCompatClient) Chat(ctx context.Context, req *ChatRequest) (*ChatR
 		return nil, fmt.Errorf("AI 调用失败 %s: %w", c.provider, err)
 	}
 	defer resp.Body.Close()
-	data, err := io.ReadAll(resp.Body)
+	// 限制响应体大小，防止 OOM
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseSize))
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("读取 AI 响应失败: %w", err)
 	}
 	if resp.StatusCode >= 400 {
 		return nil, fmt.Errorf("AI %s 返回错误 HTTP %d: %s", c.provider, resp.StatusCode, string(data))
