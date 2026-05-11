@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"go.uber.org/zap"
 	"gorm.io/gorm"
@@ -112,17 +113,51 @@ func (s *Service) ListMembers(ctx context.Context, tenantID string, branchID *st
 	return list, total, nil
 }
 
-// UpdateMember 更新
+// UpdateMember 更新（白名单字段过滤，防止越权修改）
 func (s *Service) UpdateMember(ctx context.Context, tenantID, id string, updates map[string]any) error {
+	// 字段白名单：仅允许客户端修改以下字段
+	allowed := map[string]bool{
+		"name": true, "alias_name": true, "gender": true,
+		"birth_date": true, "death_date": true, "birthplace": true,
+		"biography": true, "avatar": true, "branch_id": true,
+		"father_id": true, "mother_id": true, "generation": true,
+	}
+	safe := make(map[string]any)
+	for k, v := range updates {
+		if allowed[k] {
+			safe[k] = v
+		}
+	}
+	if len(safe) == 0 {
+		return errors.New("无有效更新字段")
+	}
+	safe["updated_at"] = time.Now()
 	return s.db.WithContext(ctx).Model(&Member{}).
 		Where("id = ? AND tenant_id = ?", id, tenantID).
-		Updates(updates).Error
+		Updates(safe).Error
 }
 
-// DeleteMember 软删除
+// DeleteMember 软删除（清理子女的父母引用，避免孤儿指针）
 func (s *Service) DeleteMember(ctx context.Context, tenantID, id string) error {
-	return s.db.WithContext(ctx).Delete(&Member{},
-		"id = ? AND tenant_id = ?", id, tenantID).Error
+	// 检查是否有子女
+	var childCount int64
+	s.db.WithContext(ctx).Model(&Member{}).
+		Where("(father_id = ? OR mother_id = ?) AND tenant_id = ?", id, id, tenantID).
+		Count(&childCount)
+
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// 将子女的父/母引用置空（解除关联）
+		if childCount > 0 {
+			tx.Model(&Member{}).
+				Where("father_id = ? AND tenant_id = ?", id, tenantID).
+				Update("father_id", nil)
+			tx.Model(&Member{}).
+				Where("mother_id = ? AND tenant_id = ?", id, tenantID).
+				Update("mother_id", nil)
+		}
+		// 软删除成员
+		return tx.Delete(&Member{}, "id = ? AND tenant_id = ?", id, tenantID).Error
+	})
 }
 
 // TreeNode 世系树节点

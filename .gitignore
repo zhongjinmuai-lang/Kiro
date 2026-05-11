@@ -39,7 +39,7 @@ ecosystem.config.js
 docker-compose.override.yml
 
 # ===== 运行时 =====
-storage/
+/storage/
 plugins/
 logs/
 tmp/
